@@ -1,6 +1,6 @@
-diff -ruN tblite/src/tblite/classical/halogen.f90 ../../v2tree/subprojects/tblite/src/tblite/classical/halogen.f90
---- a/src/tblite/classical/halogen.f90	2026-09-25 14:46:37
-+++ b/src/tblite/classical/halogen.f90	2026-10-11 20:06:15
+diff -ruN a/src/tblite/classical/halogen.f90 b/src/tblite/classical/halogen.f90
+--- a/src/tblite/classical/halogen.f90
++++ b/src/tblite/classical/halogen.f90
 @@ -316,6 +316,7 @@
     real(wp), intent(inout) :: sigma(:, :)
  
@@ -61,9 +61,9 @@ diff -ruN tblite/src/tblite/classical/halogen.f90 ../../v2tree/subprojects/tblit
     end do
  
  end subroutine get_xbond_derivs
-diff -ruN tblite/src/tblite/coulomb/charge/effective.f90 ../../v2tree/subprojects/tblite/src/tblite/coulomb/charge/effective.f90
---- a/src/tblite/coulomb/charge/effective.f90	2026-09-25 14:46:37
-+++ b/src/tblite/coulomb/charge/effective.f90	2026-10-11 20:06:15
+diff -ruN a/src/tblite/coulomb/charge/effective.f90 b/src/tblite/coulomb/charge/effective.f90
+--- a/src/tblite/coulomb/charge/effective.f90
++++ b/src/tblite/coulomb/charge/effective.f90
 @@ -546,6 +546,7 @@
     real(wp), intent(out) :: atrace(:, :)
  
@@ -131,9 +131,9 @@ diff -ruN tblite/src/tblite/coulomb/charge/effective.f90 ../../v2tree/subproject
     end do
  
  end subroutine get_damat_rec_3d
-diff -ruN tblite/src/tblite/coulomb/charge/gamma.f90 ../../v2tree/subprojects/tblite/src/tblite/coulomb/charge/gamma.f90
---- a/src/tblite/coulomb/charge/gamma.f90	2026-09-25 14:46:37
-+++ b/src/tblite/coulomb/charge/gamma.f90	2026-10-11 20:06:15
+diff -ruN a/src/tblite/coulomb/charge/gamma.f90 b/src/tblite/coulomb/charge/gamma.f90
+--- a/src/tblite/coulomb/charge/gamma.f90
++++ b/src/tblite/coulomb/charge/gamma.f90
 @@ -453,6 +453,7 @@
     real(wp), intent(out) :: atrace(:, :)
  
@@ -201,9 +201,9 @@ diff -ruN tblite/src/tblite/coulomb/charge/gamma.f90 ../../v2tree/subprojects/tb
     end do
  
  end subroutine get_damat_rec_3d
-diff -ruN tblite/src/tblite/coulomb/multipole.f90 ../../v2tree/subprojects/tblite/src/tblite/coulomb/multipole.f90
---- a/src/tblite/coulomb/multipole.f90	2026-09-25 14:46:37
-+++ b/src/tblite/coulomb/multipole.f90	2026-10-11 20:06:15
+diff -ruN a/src/tblite/coulomb/multipole.f90 b/src/tblite/coulomb/multipole.f90
+--- a/src/tblite/coulomb/multipole.f90
++++ b/src/tblite/coulomb/multipole.f90
 @@ -499,6 +499,7 @@
     real(wp), intent(inout) :: amat_sq(:, :, :)
  
@@ -428,9 +428,9 @@ diff -ruN tblite/src/tblite/coulomb/multipole.f90 ../../v2tree/subprojects/tblit
     end do
  
  end subroutine get_damat_sdq_dir_3d
-diff -ruN tblite/src/tblite/ncoord/type.f90 ../../v2tree/subprojects/tblite/src/tblite/ncoord/type.f90
---- a/src/tblite/ncoord/type.f90	2026-09-25 14:46:37
-+++ b/src/tblite/ncoord/type.f90	2026-10-11 20:06:15
+diff -ruN a/src/tblite/ncoord/type.f90 b/src/tblite/ncoord/type.f90
+--- a/src/tblite/ncoord/type.f90
++++ b/src/tblite/ncoord/type.f90
 @@ -205,6 +205,7 @@
        real(wp), intent(out) :: dcndL(:, :, :)
  
@@ -452,9 +452,9 @@ diff -ruN tblite/src/tblite/ncoord/type.f90 ../../v2tree/subprojects/tblite/src/
  
                 dcndL(:, :, iat) = dcndL(:, :, iat) + sigma
                 if (iat /= jat) then
-diff -ruN tblite/src/tblite/repulsion/effective.f90 ../../v2tree/subprojects/tblite/src/tblite/repulsion/effective.f90
---- a/src/tblite/repulsion/effective.f90	2026-09-25 14:46:37
-+++ b/src/tblite/repulsion/effective.f90	2026-10-11 20:06:15
+diff -ruN a/src/tblite/repulsion/effective.f90 b/src/tblite/repulsion/effective.f90
+--- a/src/tblite/repulsion/effective.f90
++++ b/src/tblite/repulsion/effective.f90
 @@ -208,6 +208,7 @@
     real(wp), intent(inout) :: sigma(:, :)
  
@@ -476,9 +476,9 @@ diff -ruN tblite/src/tblite/repulsion/effective.f90 ../../v2tree/subprojects/tbl
              energies(iat) = energies(iat) + 0.5_wp * dE
              if (iat /= jat) then
                 energies(jat) = energies(jat) + 0.5_wp * dE
-diff -ruN tblite/src/tblite/scf/diag.f90 ../../v2tree/subprojects/tblite/src/tblite/scf/diag.f90
---- a/src/tblite/scf/diag.f90	2026-09-25 14:46:37
-+++ b/src/tblite/scf/diag.f90	2026-10-02 13:06:28
+diff -ruN a/src/tblite/scf/diag.f90 b/src/tblite/scf/diag.f90
+--- a/src/tblite/scf/diag.f90
++++ b/src/tblite/scf/diag.f90
 @@ -34,6 +34,7 @@
        procedure(solve_dp), deferred :: solve_dp
        procedure :: get_density
@@ -533,9 +533,9 @@ diff -ruN tblite/src/tblite/scf/diag.f90 ../../v2tree/subprojects/tblite/src/tbl
 -end module tblite_scf_diag
 \ No newline at end of file
 +end module tblite_scf_diag
-diff -ruN tblite/src/tblite/scf/iterator.f90 ../../v2tree/subprojects/tblite/src/tblite/scf/iterator.f90
---- a/src/tblite/scf/iterator.f90	2026-09-25 14:46:37
-+++ b/src/tblite/scf/iterator.f90	2026-10-02 13:06:28
+diff -ruN a/src/tblite/scf/iterator.f90 b/src/tblite/scf/iterator.f90
+--- a/src/tblite/scf/iterator.f90
++++ b/src/tblite/scf/iterator.f90
 @@ -308,6 +308,7 @@
     integer :: spin
  
@@ -544,9 +544,9 @@ diff -ruN tblite/src/tblite/scf/iterator.f90 ../../v2tree/subprojects/tblite/src
     do spin = 1, 2
        call get_electronic_entropy(wfn%focc(:, spin), wfn%kt, stmp(spin))
     end do
-diff -ruN tblite/src/tblite/solvation/alpb.f90 ../../v2tree/subprojects/tblite/src/tblite/solvation/alpb.f90
---- a/src/tblite/solvation/alpb.f90	2026-09-25 14:46:37
-+++ b/src/tblite/solvation/alpb.f90	2026-10-11 20:06:15
+diff -ruN a/src/tblite/solvation/alpb.f90 b/src/tblite/solvation/alpb.f90
+--- a/src/tblite/solvation/alpb.f90
++++ b/src/tblite/solvation/alpb.f90
 @@ -691,6 +691,7 @@
     real(wp), intent(out) :: aDet
  
@@ -593,9 +593,9 @@ diff -ruN tblite/src/tblite/solvation/alpb.f90 ../../v2tree/subprojects/tblite/s
     end do
     aDet = sqrt(matdet_3x3(inertia)**(1.0_wp/3.0_wp)/(tof*vol))
  
-diff -ruN tblite/src/tblite/xtb/h0.f90 ../../v2tree/subprojects/tblite/src/tblite/xtb/h0.f90
---- a/src/tblite/xtb/h0.f90	2026-09-25 14:46:37
-+++ b/src/tblite/xtb/h0.f90	2026-10-11 20:06:15
+diff -ruN a/src/tblite/xtb/h0.f90 b/src/tblite/xtb/h0.f90
+--- a/src/tblite/xtb/h0.f90
++++ b/src/tblite/xtb/h0.f90
 @@ -361,6 +361,7 @@
     real(wp), intent(inout) :: sigma(:, :)
  

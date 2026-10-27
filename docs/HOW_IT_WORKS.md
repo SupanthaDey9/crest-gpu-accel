@@ -48,7 +48,7 @@ For every optimisation pass of at least `min_structures` structures, the CREST p
 | `same_cpu` | 1: recompute every result that came from another CPU model | 0 |
 | `local_after` | with `local = 0`: seconds without a running worker or a new result before the driver starts computing too (0: never) | 1800 |
 
-The production searches used `worker_threads = 16`, `chunk = 64`, `throttle = 60`, `min_structures = 128` and `verify = verify_other = 32`.
+The benchmark searches used `worker_threads = 16`, `chunk = 64`, `throttle = 60`, `min_structures = 128` and `verify = verify_other = 32`.
 
 ## 4. Checkpoints (`CREST_CKPT=N`, `CREST_RESUME_POST=fallback`)
 
@@ -59,4 +59,4 @@ The production searches used `worker_threads = 16`, `chunk = 64`, `throttle = 60
 - **Resume.** Set `restart = true` in the TOML input and keep the same `CREST_CKPT` value.
 - **After the MTD loop.** The stage after the loop restarts from its beginning when `CREST_RESUME_POST=fallback`; with the default `refuse`, it stops with exit code 3.
 - **Reproducibility.** With nested threads, a resumed trajectory is statistically equivalent to an uninterrupted one, not bitwise identical. Two uninterrupted multithreaded runs also differ.
-- **Known defect.** A resume late in the MTD loop (multimd occurrence 4 or later) can stop with "File crest_rotamers_3.xyz is empty".
+- **Known defect.** A resume late in the MTD loop (from the fourth MTD batch on) can stop with "File crest_rotamers_3.xyz is empty".

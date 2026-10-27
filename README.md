@@ -48,7 +48,7 @@ tests/run_tests.sh bin/crest                  # on a GPU node: single points (CP
 - **No internet on the build node:** run `./build.sh --fetch-only SRC` on a login node, then `./build.sh --sources SRC`.
 - **Specific libraries:** choose installations with `--cuda DIR` and `--openblas /path/libopenblas.so`.
 - **Other test modes:** `tests/run_tests.sh bin/crest --no-gpu` runs only the CPU single point (for example on a login node).
-  `--dist "<sbatch options>"` also runs the short search with real Slurm workers; try it once before production.
+  `--dist "<sbatch options>"` also runs the short search with real Slurm workers; try it once before a real search.
 - **Scope of the tests.** `run_tests.sh` uses a 12-atom molecule. It checks that the build works on your machine (GPU single point equal to the CPU single point to 1e-8 Eh, the three-body kernel really ran on the GPU, searches finish). It does not repeat the validation of `docs/VALIDATION.md`.
 
 ## Run on one machine with a GPU (no Slurm)
@@ -146,7 +146,7 @@ See `docs/VALIDATION.md`. In short:
 - **One test system:** all measurements come from one system (a 274-atom, +4 Ga peptide) with `--quick`.
 - **Late-resume failure:** a resume late in the MTD loop (later cycles) can fail with "File crest_rotamers_3.xyz is empty". Give jobs enough time that late preemptions are rare.
 - **Open-shell metals:** for open-shell Cu and Ni peptides at these settings, most MTDs stopped early. The same happened for Fe with the release build.
-- **Untested combinations:** full production searches used the Slurm mode. The single-machine mode was tested on small molecules only.
+- **Untested combinations:** the full benchmark searches used the Slurm mode. The single-machine mode was tested on small molecules only.
 
 ## License and citation
 

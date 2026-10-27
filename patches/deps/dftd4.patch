@@ -4,7 +4,7 @@
  
     public :: get_atm_dispersion
  
-+   ! CREST GPU ATM hook (gpu_atm_v1). Opt-in at run time with CREST_ATM_GPU=1; default and any GPU failure keep the
++   ! CREST GPU ATM hook. Opt-in at run time with CREST_ATM_GPU=1; default and any GPU failure keep the
 +   ! native CPU routine below. The CUDA implementation lives in crest_atm_gpu.cu (C ABI, see crest_atm_gpu.h).
 +   private :: atm_gpu_route, crest_atm_gpu_enabled, crest_atm_gpu_derivs
  

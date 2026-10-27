@@ -1,6 +1,6 @@
-diff -ruN --exclude=subprojects upstream/CMakeLists.txt v2tree/CMakeLists.txt
---- upstream/CMakeLists.txt	2026-09-25 14:45:13
-+++ v2tree/CMakeLists.txt	2026-10-26 21:00:22
+diff -ruN a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
 @@ -90,6 +90,23 @@
     add_compile_definitions(WITH_TBLITE)
  endif()
@@ -60,19 +60,19 @@ diff -ruN --exclude=subprojects upstream/CMakeLists.txt v2tree/CMakeLists.txt
  install(
    EXPORT
    "${PROJECT_NAME}-targets"
-@@ -361,4 +385,61 @@
+@@ -361,4 +385,60 @@
  if (WITH_TESTS)
    enable_testing()
    add_subdirectory("test")
 +endif()
 +
-+# Appended only to the isolated experiment checkout, after the frozen overlay.
-+option(WITH_TBLITE_GPU_DENSITY_EXPERIMENT "Experimental ordinary-density CUDA hook" OFF)
++# Ordinary-density CUDA hook (switched on by build.sh for the GPU build).
++option(WITH_TBLITE_GPU_DENSITY_EXPERIMENT "Ordinary-density CUDA hook" OFF)
 +if(WITH_TBLITE_GPU_DENSITY_EXPERIMENT AND NOT WITH_TBLITE_GPU)
 +  message(FATAL_ERROR "WITH_TBLITE_GPU_DENSITY_EXPERIMENT requires WITH_TBLITE_GPU")
 +endif()
 +if(WITH_TBLITE_GPU)
-+  # The additive C ABI is present in both builds; its BLAS resources remain lazy.
++  # The density C ABI is always built; its cuBLAS resources are created on first use.
 +  target_link_libraries(crest-cuda-bridge PUBLIC CUDA::cublas)
 +endif()
 +if(WITH_TBLITE_GPU_DENSITY_EXPERIMENT)
@@ -82,12 +82,11 @@ diff -ruN --exclude=subprojects upstream/CMakeLists.txt v2tree/CMakeLists.txt
 +    endif()
 +  endforeach()
 +endif()
-+# Append after the unchanged ordinary-density overlay in a fresh matched tree.
-+# No active/frozen search tree or production scheduler is changed.
++# Per-thread CUDA scratch leases (switched on by build.sh for the GPU build).
 +option(WITH_TBLITE_GPU_PERSISTENCE_EXPERIMENT "Explicit lexical worker CUDA scratch leases" OFF)
 +if(WITH_TBLITE_GPU_PERSISTENCE_EXPERIMENT AND
 +   (NOT WITH_TBLITE_GPU OR NOT WITH_TBLITE_GPU_DENSITY_EXPERIMENT))
-+  message(FATAL_ERROR "Persistence experiment requires GPU and ordinary density")
++  message(FATAL_ERROR "WITH_TBLITE_GPU_PERSISTENCE_EXPERIMENT requires WITH_TBLITE_GPU and WITH_TBLITE_GPU_DENSITY_EXPERIMENT")
 +endif()
 +if(WITH_TBLITE_GPU)
 +  find_package(Threads REQUIRED)
@@ -103,7 +102,7 @@ diff -ruN --exclude=subprojects upstream/CMakeLists.txt v2tree/CMakeLists.txt
 +endif()
 +
 +# D4 three-body (ATM) dispersion kernel used by the dftd4 hook and the crest_oloop phase switch.
-+# The default flags and architectures reproduce the object of the validated v2 binary. Other GPU generations run the
++# The default flags and architectures are those of the benchmarked build. Other GPU generations run the
 +# sm_80 code (8.x) or fall back to the CPU routine at run time; extend CREST_ATM_CUDA_GENCODE to add SASS targets.
 +if(WITH_TBLITE_GPU)
 +  set(CREST_ATM_CUDA_GENCODE "-gencode;arch=compute_80,code=sm_80;-gencode;arch=compute_90,code=sm_90"
@@ -122,9 +121,9 @@ diff -ruN --exclude=subprojects upstream/CMakeLists.txt v2tree/CMakeLists.txt
 +  set_source_files_properties("${_atm_obj}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 +  target_sources(crest-cuda-bridge PRIVATE "${_atm_obj}")
  endif()
-diff -ruN --exclude=subprojects upstream/config/CMakeLists.txt v2tree/config/CMakeLists.txt
---- upstream/config/CMakeLists.txt	2026-09-25 14:45:13
-+++ v2tree/config/CMakeLists.txt	2026-09-25 20:56:45
+diff -ruN a/config/CMakeLists.txt b/config/CMakeLists.txt
+--- a/config/CMakeLists.txt
++++ b/config/CMakeLists.txt
 @@ -31,6 +31,7 @@
  # Options for enabling or disabling features
  option(WITH_OpenMP  "Enable OpenMP support"       TRUE)
@@ -133,9 +132,9 @@ diff -ruN --exclude=subprojects upstream/config/CMakeLists.txt v2tree/config/CMa
  option(WITH_TOMLF   "Enable support for toml-f"   TRUE)
  option(WITH_GFN0    "Enable support for GFN0-xTB" TRUE)
  option(WITH_GFNFF   "Enable support for GFN-FF"   TRUE)
-diff -ruN --exclude=subprojects upstream/config/config.cmake.in v2tree/config/config.cmake.in
---- upstream/config/config.cmake.in	2026-09-25 14:45:13
-+++ v2tree/config/config.cmake.in	2026-09-25 21:02:16
+diff -ruN a/config/config.cmake.in b/config/config.cmake.in
+--- a/config/config.cmake.in
++++ b/config/config.cmake.in
 @@ -8,6 +8,10 @@
  
    include(CMakeFindDependencyMacro)
@@ -147,9 +146,9 @@ diff -ruN --exclude=subprojects upstream/config/config.cmake.in v2tree/config/co
    if(NOT TARGET "OpenMP::OpenMP_Fortran" AND "@PROJECT_NAME@_WITH_OpenMP")
      find_dependency("OpenMP" REQUIRED)
    endif()
-diff -ruN --exclude=subprojects upstream/src/algos/dynamics.f90 v2tree/src/algos/dynamics.f90
---- upstream/src/algos/dynamics.f90	2026-09-25 14:45:13
-+++ v2tree/src/algos/dynamics.f90	2026-10-07 11:27:14
+diff -ruN a/src/algos/dynamics.f90 b/src/algos/dynamics.f90
+--- a/src/algos/dynamics.f90
++++ b/src/algos/dynamics.f90
 @@ -32,6 +32,8 @@
    logical :: pr,wr
  !========================================================================================!
@@ -195,9 +194,9 @@ diff -ruN --exclude=subprojects upstream/src/algos/dynamics.f90 v2tree/src/algos
  
    if (io == 0) then
      write (stdout,*) 'MD run completed successfully'
-diff -ruN --exclude=subprojects upstream/src/algos/numhess.f90 v2tree/src/algos/numhess.f90
---- upstream/src/algos/numhess.f90	2026-09-25 14:45:13
-+++ v2tree/src/algos/numhess.f90	2026-10-07 11:51:33
+diff -ruN a/src/algos/numhess.f90 b/src/algos/numhess.f90
+--- a/src/algos/numhess.f90
++++ b/src/algos/numhess.f90
 @@ -45,6 +45,9 @@
    logical :: pr,wr
  !========================================================================================!
@@ -279,9 +278,9 @@ diff -ruN --exclude=subprojects upstream/src/algos/numhess.f90 v2tree/src/algos/
 -
  
  
-diff -ruN --exclude=subprojects upstream/src/algos/optimization.f90 v2tree/src/algos/optimization.f90
---- upstream/src/algos/optimization.f90	2026-09-25 14:45:13
-+++ v2tree/src/algos/optimization.f90	2026-10-07 16:34:21
+diff -ruN a/src/algos/optimization.f90 b/src/algos/optimization.f90
+--- a/src/algos/optimization.f90
++++ b/src/algos/optimization.f90
 @@ -37,6 +37,8 @@
    logical :: pr,wr
  !========================================================================================!
@@ -344,16 +343,16 @@ diff -ruN --exclude=subprojects upstream/src/algos/optimization.f90 v2tree/src/a
    return
  end subroutine crest_ensemble_screening
 -
-diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos/parallel.f90
---- upstream/src/algos/parallel.f90	2026-09-25 14:45:13
-+++ v2tree/src/algos/parallel.f90	2026-10-12 12:08:15
+diff -ruN a/src/algos/parallel.f90 b/src/algos/parallel.f90
+--- a/src/algos/parallel.f90
++++ b/src/algos/parallel.f90
 @@ -17,6 +17,733 @@
  ! along with crest.  If not, see <https://www.gnu.org/licenses/>.
  !================================================================================!
  
 +!========================================================================================!
 +!========================================================================================!
-+!> CREST_DIST_OLOOP (crest_dist_oloop_v2, 2026-10-12; v1 + review fixes F1-F10): opt-in
++!> CREST_DIST_OLOOP: opt-in
 +!> distribution of one crest_oloop pass over Slurm array workers that run this same binary.
 +!> Inert unless CREST_DIST_OLOOP (driver) or CREST_DIST_OLOOP_WORKER (worker) is set.
 +!> Helpers only: config file, settings fingerprint, chunk/result files (stream I/O).
@@ -544,7 +543,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +
 +!>--- text record of every calcdata setting that can change an optimization result;
 +!>    reals as bit patterns. Driver and worker must produce the same text.
-+!>    cpu_solver (hybrid v1): the pass runs the CPU tblite solver whatever c says
++!>    cpu_solver: the pass runs the CPU tblite solver whatever c says
 +!>    (CREST_OPT_SOLVER=cpu), so the solver is recorded as 0 (cpu), as the worker reads it
 +  subroutine dist_fingerprint(c,fp,n,cpu_solver)
 +    type(calcdata),intent(in) :: c
@@ -855,7 +854,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +    ok = .true.
 +  end subroutine dist_read_chunk
 +
-+!>--- result file (v2): per structure status (0 optimized, 1 partial, 2 failed), energy, gnorm,
++!>--- result file (format 2): per structure status (0 optimized, 1 partial, 2 failed), energy, gnorm,
 +!>    level energies (etmp) and the optimized xyz (Bohr, before any output rounding).
 +!>    The header names the writer's CPU model, crest binary (sha256) and Slurm task; a checksum
 +!>    of the payload precedes the end magic. The temporary name is unique per host, task and pid.
@@ -1175,12 +1174,12 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
    use optimize_module
    use iomod,only:makedir,directory_exist,remove
    use crest_restartlog,only:trackrestart,restart_write_dummy
-+  !>--- CREST_CKPT: opt-pass journal (SYNTHESIS B.3, C.3)
++  !>--- CREST_CKPT: opt-pass journal
 +  use crest_restartlog,only:restart_step,restart_goal_of,restart_set_kind
 +  use crest_mdckpt,only:ckpt_steps,mdckpt_arm,mdckpt_disarm,ck_path,ck_resume, &
 +  &                     ck_commit,count_lines,truncate_lines,xyz_key,ck_every,ck_unique
 +  use crest_parameters,only:bohr,int64,stderr
-+  use crest_dist_oloop  !> CREST_DIST_OLOOP (crest_dist_oloop_v2)
++  use crest_dist_oloop  !> CREST_DIST_OLOOP
 +  use tblite_api,only:xtblvl
 +  use iso_fortran_env,only:int32
 +  use iso_c_binding,only:c_int
@@ -1218,7 +1217,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +  character(len=16) :: opt_solver_env
 +  integer :: opt_solver_len,opt_solver_stat
 +  logical :: opt_cpu
-+  !>--- hybrid v2: per-phase GPU ATM switch (C ABI of crest_atm_gpu.cu, gpu_atm_v1)
++  !>--- per-phase GPU ATM switch (C ABI of crest_atm_gpu.cu)
 +  logical :: atm_gpu_was_on
 +  interface
 +    function crest_atm_gpu_enabled() bind(C,name='crest_atm_gpu_enabled') result(on)
@@ -1241,11 +1240,11 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +  real(wp),allocatable :: ejr(:)
  
  !>--- decide wether to skip this call
-+  if (ckpt_steps() > 0) call restart_set_kind('oloop') !> CREST_CKPT (SYNTHESIS C.3)
++  if (ckpt_steps() > 0) call restart_set_kind('oloop') !> CREST_CKPT
    if (trackrestart(env)) then
      call restart_write_dummy(ensemblefile)
 +    !>--- CREST_CKPT: no stale crest_ensemble.xyz may be renamed over the
-+    !>    ensemble restored at goal-1 (SYNTHESIS C.3, skip branch)
++    !>    ensemble restored at goal-1
 +    if (dump.and.ckpt_steps() > 0.and.restart_step() == restart_goal_of()-1) &
 +    &  call remove(ensemblefile)
      return
@@ -1279,7 +1278,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +    end if
 +  end if
 +
-+!>--- CREST_CKPT: arm the journal of this tracked opt pass (SYNTHESIS C.3)
++!>--- CREST_CKPT: arm the journal of this tracked opt pass
 +  jr = dump.and.ckpt_steps() > 0
 +  nok = 0
 +  ndone = 0
@@ -1309,7 +1308,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +  else if (opt_solver_stat /= 1 .and. opt_solver_len > 0) then
 +    write (stdout,'(a)') 'CREST_OPT_SOLVER is set but not "cpu"; ignored, the selected solver is kept'
 +  end if
-+!>--- hybrid v2: GPU ATM (CREST_ATM_GPU=1) only in MTD/MD; every opt pass (in-process, dist
++!>--- GPU ATM (CREST_ATM_GPU=1) only in MTD/MD; every opt pass (in-process, dist
 +!>    driver incl. local chunks and verification, worker) runs the native CPU ATM
 +  atm_gpu_was_on = (crest_atm_gpu_enabled() /= 0_c_int)
 +  call crest_atm_gpu_force(0_c_int)
@@ -1339,7 +1338,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
    wr = .false. !> write crestopt.log
    if (dump) then
 +    if (jr) then
-+      call oloop_journal_open() !> CREST_CKPT (SYNTHESIS B.3, C.3)
++      call oloop_journal_open() !> CREST_CKPT
 +    else
      open (newunit=ich,file=ensemblefile)
      open (newunit=ich2,file=ensembleelog)
@@ -1351,7 +1350,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
    z = 0  !> counter to perform optimization in right order (1...nall)
    eread(:) = 0.0_wp
    grads(:,:,:) = 0.0_wp
-+  !>--- CREST_CKPT: results of journaled structures, and the todo list (SYNTHESIS C.3)
++  !>--- CREST_CKPT: results of journaled structures, and the todo list
 +  if (jr.and.ndone > 0) then
 +    c = nok
 +    k = ndone
@@ -1416,7 +1415,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
      !$omp critical
      z = z+1
 -    zcopy = z
-+    zcopy = todo(z) !> CREST_CKPT: todo = [1..nall] minus journaled structures (C.3)
++    zcopy = todo(z) !> CREST_CKPT: todo = [1..nall] minus journaled structures
      mols(job)%nat = nat
      mols(job)%at(:) = at(:)
 -    mols(job)%xyz(:,:) = xyz(:,:,z)
@@ -1451,7 +1450,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
          molsnew(job)%comment = trim(atmp)
          call molsnew(job)%append(ich)
          call calc_eprint(calculations(job),energy,calculations(job)%etmp,gnorm,ich2)
-+        if (jr.and.jok) then !> CREST_CKPT: frame+elog line on disk before the journal record (B.3)
++        if (jr.and.jok) then !> CREST_CKPT: frame+elog line on disk before the journal record
 +          flush (ich,iostat=jio)
 +          if (jio == 0) flush (ich2,iostat=jio)
 +          if (jio == 0) write (jch,'(i0,1x,i0)',iostat=jio) zcopy,0
@@ -1474,7 +1473,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
      else
        eread(zcopy) = 1.0_wp
 +      if (dw) call dist_record(zcopy,2,energy,job) !> CREST_DIST_OLOOP
-+      if (jr.and.jok) then !> CREST_CKPT: journal record for a failed structure (B.3)
++      if (jr.and.jok) then !> CREST_CKPT: journal record for a failed structure
 +        flush (ich,iostat=jio)
 +        if (jio == 0) flush (ich2,iostat=jio)
 +        if (jio == 0) write (jch,'(i0,1x,i0)',iostat=jio) zcopy,2
@@ -1527,7 +1526,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
      close (ich2)
    end if
 +!>--- CREST_CKPT: publish the pass output under the upstream names; the journal
-+!>    stays in crest_ckpt/step_<id>/ until the next armed step purges it (C.3)
++!>    stays in crest_ckpt/step_<id>/ until the next armed step purges it
 +  if (jr) then
 +    close (jch,iostat=io)
 +    call rename(fx,ensemblefile,io)
@@ -1544,7 +1543,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +!>--- CREST_DIST_OLOOP: worker result file; optional exact dump of the pass result
 +  if (dw) call dist_worker_finish()
 +  if (dump.and..not.present(customcalc)) call dist_dump_arrays()
-+  call crest_atm_gpu_force(-1_c_int)   !> hybrid v2: back to CREST_ATM_GPU for MTD/MD
++  call crest_atm_gpu_force(-1_c_int)   !> back to CREST_ATM_GPU for MTD/MD
  
    deallocate (grads)
    call profiler%clear()
@@ -1557,7 +1556,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +!========================================================================================!
 +  subroutine oloop_journal_open()
 +!*****************************************************************
-+!* CREST_CKPT (SYNTHESIS B.3, C.3)
++!* CREST_CKPT
 +!* Open the journaled pass output in crest_ckpt/step_<id>/.
 +!* On resume (header equal: step, nall, nat, optlev, input key)
 +!* the finished structures are kept:
@@ -1768,7 +1767,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +    &  ' (status ',ios,')'
 +  end subroutine oloop_move_aside
 +!========================================================================================!
-+!> CREST_DIST_OLOOP internal routines (crest_dist_oloop_v2)
++!> CREST_DIST_OLOOP internal routines
 +!========================================================================================!
 +  subroutine dist_worker_prepare()
 +!*****************************************************************
@@ -1913,7 +1912,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +
 +  subroutine dist_driver(okd)
 +!*****************************************************************
-+!* Driver (crest_dist_oloop_v2/README.md):
++!* Driver:
 +!*  1. pass folder <workdir>/pass_<id>, id = hash(settings, sha256 of
 +!*     this crest binary, input); an existing folder is reused only if
 +!*     its PASS.txt names the same binary and settings fingerprint
@@ -1985,7 +1984,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +
 +!>--- 1. pass identity (settings, binary, input) and folder
 +    call dist_overrides_get(mycalc,diov,drov)
-+    call dist_fingerprint(mycalc,dfp,dnfp,cpu_solver=opt_cpu) !> hybrid v1: effective solver of the pass
++    call dist_fingerprint(mycalc,dfp,dnfp,cpu_solver=opt_cpu) !> effective solver of the pass
 +    dkey = xyz_key(nat,nall,dxyz0)
 +    call dist_hash_hex(dfp(1:dnfp)//'exe='//trim(mysha)//achar(10),nat,nall,dkey,pid)
 +    pdir = trim(dcfg%workdir)//'/pass_'//pid
@@ -2115,7 +2114,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +      call dist_tla(tl,nt,'accuracy = '//trim(adjustl(rbuf)))
 +      write (rbuf,'(i0)') mycalc%calcs(1)%maxscc
 +      call dist_tla(tl,nt,'maxscc = '//trim(rbuf))
-+      if (mycalc%calcs(1)%tblite_solver == 1.and..not.opt_cpu) then !> hybrid v1: CPU workers under CREST_OPT_SOLVER=cpu
++      if (mycalc%calcs(1)%tblite_solver == 1.and..not.opt_cpu) then !> CPU workers under CREST_OPT_SOLVER=cpu
 +        call dist_tla(tl,nt,'tblite_solver = "cuda"')
 +      else
 +        call dist_tla(tl,nt,'tblite_solver = "cpu"')
@@ -2248,7 +2247,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +      call system_clock(t1)
 +      qok = .false.
 +      !>--- squeue for the whole pass, also after a worker refused: chunks seen running are not
-+      !>    computed locally, so the running state must stay current (review F1)
++      !>    computed locally, so the running state must stay current
 +      if (dcfg%submit /= 0) then
 +        if (first.or.real(t1-tq,wp)/real(trate,wp) >= real(dcfg%poll,wp)) then
 +          first = .false.
@@ -2285,7 +2284,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +          if (qok) then
 +            nqfail = 0
 +            if (any(runn)) tact = t1
-+            !>--- time a chunk was first seen out of squeue without a result (review F2)
++            !>--- time a chunk was first seen out of squeue without a result
 +            do ic = 0,nch-1
 +              if (live(ic)) then
 +                gone(ic) = 0
@@ -2377,7 +2376,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +      if (bad) localon = .true.
 +      if (all(have.or..not.need)) exit
 +
-+      !>--- no worker running and no new result for local_after s: the driver computes too (review F5)
++      !>--- no worker running and no new result for local_after s: the driver computes too
 +      if (.not.localon.and.dcfg%local_after > 0) then
 +        if (real(t1-tact,wp)/real(trate,wp) >= real(dcfg%local_after,wp)) then
 +          localon = .true.
@@ -2387,7 +2386,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +      end if
 +
 +      !>--- submit chunks that have no result and are not in squeue: never submitted, or out of
-+      !>    squeue for at least lost_wait s (review F2); at most max_rounds submissions per chunk
++      !>    squeue for at least lost_wait s; at most max_rounds submissions per chunk
 +      if (qok.and..not.bad.and.t1 >= tnextsub) then
 +        sel = need.and..not.have.and..not.live.and.nsub < dcfg%max_rounds
 +        do ic = 0,nch-1
@@ -2440,7 +2439,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +            gone(list) = 0
 +            nsfail = 0
 +          else
-+            !>--- a failed sbatch uses no submission of the chunks; back off (review F5)
++            !>--- a failed sbatch uses no submission of the chunks; back off
 +            nsfail = nsfail+1
 +            tnextsub = t1+int(min(600.0_wp,real(dcfg%poll,wp)*2.0_wp**min(nsfail,10))*real(trate,wp),int64)
 +            write (stderr,'(a,i0,a)') 'CREST_DIST> WARNING: sbatch failed (round ',nrounds,'), see '// &
@@ -2482,7 +2481,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +        if (nl > 0) then
 +          list = pack([(ic,ic=nch-1,0,-1)],[(sel(ic),ic=nch-1,0,-1)])
 +          nl = min(nb,nl)
-+          !>--- their pending worker tasks are cancelled (review F9)
++          !>--- their pending worker tasks are cancelled
 +          ids = ''
 +          do ii = 1,nl
 +            ic = list(ii)
@@ -2554,7 +2553,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +        return
 +      end if
 +    end if
-+!>--- results of workers on another CPU model (review F3): accepted only after a tolerance check
++!>--- results of workers on another CPU model: accepted only after a tolerance check
 +!>    (same status, |dE| < dtol_e Eh, coordinate RMSD < dtol_rmsd A) of verify_other of them;
 +!>    otherwise (or with same_cpu = 1, or verify_other = 0) the driver recomputes those chunks
 +    if (nwko > 0) then
@@ -2865,7 +2864,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
    use iomod,only:makedir,directory_exist,remove
    use omp_lib
    use crest_restartlog,only:trackrestart,restart_write_dummy
-+  !>--- CREST_CKPT: per-MD checkpoints of this tracked batch (SYNTHESIS C.3)
++  !>--- CREST_CKPT: per-MD checkpoints of this tracked batch
 +  use crest_restartlog,only:restart_step,restart_goal_of,restart_set_kind
 +  use crest_mdckpt,only:ckpt_steps,mdckpt_arm,mdckpt_disarm,ck_path,itoa,ck_every
    implicit none
@@ -2881,7 +2880,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +  logical,target :: gpu_fatal
  !===========================================================!
  !>--- decide wether to skip this call
-+  if (ckpt_steps() > 0) call restart_set_kind('multimd') !> CREST_CKPT (SYNTHESIS C.3)
++  if (ckpt_steps() > 0) call restart_set_kind('multimd') !> CREST_CKPT
    if (trackrestart(env)) then
      call restart_write_dummy('crest_dynamics.trj')
      return
@@ -2890,7 +2889,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
    end if
  
 +!>--- CREST_CKPT: arm this tracked batch; the per-MD trajectories move from
-+!>    MDFILES/ to crest_ckpt/step_<id>/md_<i>.trj (SYNTHESIS B.0, B.2, C.3).
++!>    MDFILES/ to crest_ckpt/step_<id>/md_<i>.trj.
 +!>    Every return below this point must call mdckpt_disarm().
 +  if (ckpt_steps() > 0) then
 +    call mdckpt_arm(restart_step(),restart_goal_of() > 0.and.restart_step() >= restart_goal_of())
@@ -2935,7 +2934,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +  if (gpu_fatal) then
 +    env%iostatus_meta = status_failed
 +    deallocate (calculations,moltmps)
-+    if (ckpt_steps() > 0) call mdckpt_disarm() !> CREST_CKPT (SYNTHESIS C.3, GPU early return)
++    if (ckpt_steps() > 0) call mdckpt_disarm() !> CREST_CKPT (GPU early return)
 +    return
 +  end if
  
@@ -3016,7 +3015,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +    end if
 +    call collect(nsim,mddats)
 +  end if
-+  if (ckpt_steps() > 0) call mdckpt_disarm() !> CREST_CKPT (SYNTHESIS C.3)
++  if (ckpt_steps() > 0) call mdckpt_disarm() !> CREST_CKPT
  
    call profiler%clear()
    deallocate (calculations)
@@ -3062,7 +3061,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
    use iomod,only:makedir,directory_exist,remove
    use omp_lib
    use crest_restartlog,only:trackrestart,restart_write_dummy
-+  !>--- CREST_CKPT: per-MD checkpoints of this tracked batch (SYNTHESIS C.3)
++  !>--- CREST_CKPT: per-MD checkpoints of this tracked batch
 +  use crest_restartlog,only:restart_step,restart_goal_of,restart_set_kind
 +  use crest_mdckpt,only:ckpt_steps,mdckpt_arm,mdckpt_disarm,ck_path,itoa,ck_every
    implicit none
@@ -3078,7 +3077,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +  logical,target :: gpu_fatal
  !===========================================================!
  !>--- decide wether to skip this call
-+  if (ckpt_steps() > 0) call restart_set_kind('multimd2') !> CREST_CKPT (SYNTHESIS C.3)
++  if (ckpt_steps() > 0) call restart_set_kind('multimd2') !> CREST_CKPT
    if (trackrestart(env)) then
      call restart_write_dummy('crest_dynamics.trj')
      return
@@ -3087,7 +3086,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
    end if
  
 +!>--- CREST_CKPT: arm this tracked batch; the per-MD trajectories move from
-+!>    MDFILES/ to crest_ckpt/step_<id>/md_<i>.trj (SYNTHESIS B.0, B.2, C.3).
++!>    MDFILES/ to crest_ckpt/step_<id>/md_<i>.trj.
 +!>    Every return below this point must call mdckpt_disarm().
 +  if (ckpt_steps() > 0) then
 +    call mdckpt_arm(restart_step(),restart_goal_of() > 0.and.restart_step() >= restart_goal_of())
@@ -3181,13 +3180,13 @@ diff -ruN --exclude=subprojects upstream/src/algos/parallel.f90 v2tree/src/algos
 +    end if
 +    call collect(nsim,mddats)
 +  end if
-+  if (ckpt_steps() > 0) call mdckpt_disarm() !> CREST_CKPT (SYNTHESIS C.3)
++  if (ckpt_steps() > 0) call mdckpt_disarm() !> CREST_CKPT
  
    call profiler%clear()
    deallocate (calculations)
-diff -ruN --exclude=subprojects upstream/src/algos/refine.f90 v2tree/src/algos/refine.f90
---- upstream/src/algos/refine.f90	2026-09-25 14:45:13
-+++ v2tree/src/algos/refine.f90	2026-10-07 16:34:21
+diff -ruN a/src/algos/refine.f90 b/src/algos/refine.f90
+--- a/src/algos/refine.f90
++++ b/src/algos/refine.f90
 @@ -51,6 +51,7 @@
    integer :: nrefine,refine_stage
  !===========================================================!
@@ -3224,14 +3223,14 @@ diff -ruN --exclude=subprojects upstream/src/algos/refine.f90 v2tree/src/algos/r
    deallocate (etmp,eread,xyz,at)
    return
  end subroutine crest_refine
-diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/src/algos/search_conformers.f90
---- upstream/src/algos/search_conformers.f90	2026-09-25 14:45:13
-+++ v2tree/src/algos/search_conformers.f90	2026-10-11 22:42:14
+diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
+--- a/src/algos/search_conformers.f90
++++ b/src/algos/search_conformers.f90
 @@ -34,12 +34,18 @@
    use iomod
    use utilities
    use cregen_interface
-+  !>--- CREST_CKPT (SYNTHESIS C.5): replay guards, post-loop entry, trial-MTD reuse
++  !>--- CREST_CKPT: replay guards, post-loop entry, trial-MTD reuse
 +  use crest_parameters, only: stderr,int64
 +  use crest_restartlog, only: trackrestart,restart_step,restart_goal_of,restart_replaying, &
 +  &                           restart_set_kind,restart_set_stage,restart_post_restore_due
@@ -3250,22 +3249,22 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
    if (env%performMTD) then
  !>--- (optional) calculate a short 1ps test MTD to check settings
     call tim%start(1,'Trial metadynamics (MTD)')
-+   !>--- CREST_CKPT (SYNTHESIS C.5 A5): on a resume, reuse the recorded result
++   !>--- CREST_CKPT: on a resume, reuse the recorded result
 +   !>    (tstep, SHAKE) instead of rerunning the trial MTD; record it otherwise
 +   ldum = .false.
 +   if (ckpt_steps() > 0.and.restart_goal_of() > 0) call trialmd_reuse(ldum)
 +   if (.not.ldum) then
-+   wbo_before = allocated(env%ref%wbo)  !> CREST_CKPT (Round 2): did trialmd compute the reference WBOs?
++   wbo_before = allocated(env%ref%wbo)  !> CREST_CKPT: did trialmd compute the reference WBOs?
     call trialmd(env)  
 +   if (ckpt_steps() > 0.and.env%iostatus_meta == 0) call trialmd_record(wbo_before)
 +   end if
     call tim%stop(1)
     if(env%iostatus_meta .ne. 0 ) return
    end if
-+!>--- CREST_CKPT (Round 2): the trial MTD (dynamics on env%calc) leaves its last tblite
++!>--- CREST_CKPT: the trial MTD (dynamics on env%calc) leaves its last tblite
 +!>    wavefunction in env%calc, and every later MD batch copies env%calc (multimd per-thread
 +!>    start engrad, multimd2 rotamer MDs, the multimd_init WBO singlepoint). A resumed run skips
-+!>    the trial MTD (A5) and cannot reproduce that state, so with CREST_CKPT>0 fresh and resumed
++!>    the trial MTD and cannot reproduce that state, so with CREST_CKPT>0 fresh and resumed
 +!>    runs both drop the calculator objects here; the next engrad sets them up anew.
 +  if (ckpt_steps() > 0 .and. .not.crest_gpu_requested(env%calc)) call env%calc%dealloc_params()
  
@@ -3274,7 +3273,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
    env%nreset = 0
    start = .true.
    MAINLOOP : do
-+!>--- CREST_CKPT (SYNTHESIS B.4, C.5): stage written into the restart record;
++!>--- CREST_CKPT: stage written into the restart record;
 +!>    'mtd' at the top of EVERY MAINLOOP pass ('post' is set at the post-loop
 +!>    entry below), so MTD steps of a later pass resume in place
 +    if (ckpt_steps() > 0) call restart_set_stage('mtd')
@@ -3286,7 +3285,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
      else 
  !>--- at the beginning, wipe directory clean
 +      if (ckpt_steps() > 0.and.restart_goal_of() > 0) then
-+        !>--- CREST_CKPT (SYNTHESIS C.5 C2): resuming, keep the iteration
++        !>--- CREST_CKPT: resuming, keep the iteration
 +        !>    backups .cre_* (V2cleanup would delete them)
 +        call clean_V2i
 +      else
@@ -3317,7 +3316,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
      call tim%stop(3)
      if(env%iostatus_meta .ne. 0 ) return
  
-+!>--- CREST_CKPT (SYNTHESIS C.5 C2): no backup renames while replaying
++!>--- CREST_CKPT: no backup renames while replaying
 +!>    completed steps (they would put dummies over the kept .cre_* files)
 +    if (.not.(ckpt_steps() > 0.and.restart_replaying())) then
  !>--- save the CRE under a backup name
@@ -3335,7 +3334,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
        start = .false.
  !>-- obtain a first lowest energy as reference
 -      env%eprivious = env%elowest
-+!>   (CREST_CKPT, SYNTHESIS C.5 C3: not while replaying; skipped CREGENs
++!>   (CREST_CKPT: not while replaying; skipped CREGENs
 +!>    do not update elowest, eprivious comes from crest.restart then)
 +      if (.not.(ckpt_steps() > 0.and.restart_replaying())) &
 +      & env%eprivious = env%elowest
@@ -3346,7 +3345,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
    write (stdout,'(''           MTD Simulations done         '')')
    write (stdout,'(''========================================'')')
    write (stdout,'(1x,''Collecting ensmbles.'')')
-+!>--- CREST_CKPT (SYNTHESIS B.5, C.5, D.2/D.5): tracked post-loop entry.
++!>--- CREST_CKPT: tracked post-loop entry.
 +!>    Live: snapshot .cre_* to crest_ckpt/postloop/ BEFORE collectcre deletes
 +!>    them, then the 'collect' step dumps crest.restart (and its postloop copy).
 +!>    Resuming at this entry: put the snapshot back before collectcre.
@@ -3359,7 +3358,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
 +  end if
  !>-- collecting all ensembles saved as ".cre_*.xyz"
 -  call collectcre(env)                      
-+!>   (CREST_CKPT G1: not while passing through an earlier post-loop in replay)
++!>   (CREST_CKPT: not while passing through an earlier post-loop in replay)
 +  if (.not.(ckpt_steps() > 0.and.restart_replaying())) &
 +  & call collectcre(env)
    call newcregen(env,0)
@@ -3369,7 +3368,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
  
      call elowcheck(lower,env)
      if (lower) then
-+      if (.not.(ckpt_steps() > 0.and.restart_replaying())) then !> CREST_CKPT G2 (SYNTHESIS C.5)
++      if (.not.(ckpt_steps() > 0.and.restart_replaying())) then !> CREST_CKPT
        call checkname_xyz(crefile,atmp,str)
        call checkname_xyz('.cre',str,btmp)
        call rename(atmp,btmp)
@@ -3381,7 +3380,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
        call confg_chk3(env)
        call elowcheck(lower,env)
        if (lower) then
-+        if (.not.(ckpt_steps() > 0.and.restart_replaying())) then !> CREST_CKPT G2 (SYNTHESIS C.5)
++        if (.not.(ckpt_steps() > 0.and.restart_replaying())) then !> CREST_CKPT
          call checkname_xyz(crefile,atmp,str)
          call checkname_xyz('.cre',str,btmp)
          call rename(atmp,btmp)
@@ -3393,7 +3392,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
  !>--- print CREGEN results and clean up Directory a bit
      write (stdout,'(/)')
      call smallhead('Final Ensemble Information')
-+!>--- CREST_CKPT (SYNTHESIS C.5): a resume whose goal step was never reached
++!>--- CREST_CKPT: a resume whose goal step was never reached
 +!>    replayed a different path; stop instead of reporting a wrong ensemble
 +    if (ckpt_steps() > 0.and.restart_goal_of() > restart_step()) then
 +      write (stderr,'(a,i0,a,i0)') '**ERROR** CREST_RESTART> goal never reached: target step ', &
@@ -3407,15 +3406,15 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
 +!========================================================================================!
 +contains
 +!========================================================================================!
-+!> CREST_CKPT helpers (SYNTHESIS B.5, C.5). They are only called when CREST_CKPT > 0.
++!> CREST_CKPT helpers. They are only called when CREST_CKPT > 0.
 +!> Everything they move goes into crest_ckpt/; nothing is deleted.
 +
 +  subroutine trialmd_reuse(ok)
 +!**********************************************************************
-+!* CREST_CKPT (SYNTHESIS B.5, C.5 A5): apply the trial-MTD result
++!* CREST_CKPT: apply the trial-MTD result
 +!* recorded in crest_ckpt/trialmd.txt ("<Z16 bits of tstep> <shake>
-+!* <wbo>") with exactly the transfer block of P setuptest.f90:214-218.
-+!* Round 2: if the trial MTD had to compute the reference WBOs
++!* <wbo>") with exactly the transfer block of setuptest.f90:214-218.
++!* If the trial MTD had to compute the reference WBOs
 +!* (setuptest.f90:92-99; every later MD batch takes its SHAKE bond
 +!* selection from env%ref%wbo), <wbo>=1 and the recorded matrix is
 +!* restored from crest_ckpt/trialmd_wbo.bin, so the resumed run holds
@@ -3468,7 +3467,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
 +      call move_alloc(wbo,env%ref%wbo)
 +    end if
 +    if (.not.allocated(env%ref%wbo).and.env%calc%nfreeze > 0) return
-+    !>--- transfer final settings to global settings (P setuptest.f90:214-218)
++    !>--- transfer final settings to global settings (setuptest.f90:214-218)
 +    env%mdstep = tstep
 +    env%mddat%tstep = tstep
 +    env%shake = smode
@@ -3481,9 +3480,9 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
 +
 +  subroutine trialmd_record(wbo_before)
 +!**********************************************************************
-+!* CREST_CKPT (SYNTHESIS B.5, C.5 A5): record the trial-MTD result
++!* CREST_CKPT: record the trial-MTD result
 +!* (as transferred to env by trialmd) in crest_ckpt/trialmd.txt,
-+!* written as .tmp + fsync + rename. Round 2: if trialmd computed the
++!* written as .tmp + fsync + rename. If trialmd computed the
 +!* reference WBOs (none before it), they go to trialmd_wbo.bin first
 +!* (also .tmp + fsync + rename), and <wbo>=1 is recorded only if that
 +!* commit succeeded.
@@ -3513,7 +3512,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
 +
 +  subroutine snapshot_cre()
 +!**********************************************************************
-+!* CREST_CKPT (SYNTHESIS B.5, C.5): post-loop entry snapshot.
++!* CREST_CKPT: post-loop entry snapshot.
 +!* The .cre_<n>.xyz files (n = 0,1,... as collectcre sees them) are
 +!* copied byte-exactly into crest_ckpt/postloop.tmp/, their number is
 +!* written last to cre.count (tmp+rename), then the directories are
@@ -3578,7 +3577,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
 +
 +  subroutine restore_cre()
 +!**********************************************************************
-+!* CREST_CKPT (SYNTHESIS C.5, D.5/D.6): resume at the post-loop entry.
++!* CREST_CKPT: resume at the post-loop entry.
 +!* The snapshot in crest_ckpt/postloop/ is checked first (cre.count and
 +!* every listed file); if it is incomplete CREST stops with exit code 3
 +!* before any .cre_* file is touched. Then the current .cre_<n>.xyz files
@@ -3704,7 +3703,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
    use utilities
    use crest_restartlog
    use parallel_interface
-+  use crest_mdckpt, only: ckpt_steps  !> CREST_CKPT (SYNTHESIS C.5 C1)
++  use crest_mdckpt, only: ckpt_steps  !> CREST_CKPT
    implicit none
    type(systemdata) :: env 
    character(len=*),intent(in) :: ensnam
@@ -3716,7 +3715,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
       !>--- rename ensemble and sort
         call checkname_xyz(crefile,inpnam,outnam)
         call rename(ensemblefile,trim(inpnam))
-+     !>--- CREST_CKPT (SYNTHESIS C.5 C1): track the opt-pass output, so that a
++     !>--- CREST_CKPT: track the opt-pass output, so that a
 +     !>    resume at the next tracked step restores the real pass result at goal-1
 +       if (ckpt_steps() > 0.and.restart_step() >= restart_goal_of()) then
 +         call rdensembleparam(trim(inpnam),nat,nall)
@@ -3742,7 +3741,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
    use strucrd
    use dynamics_module
    use shake_module
-+  !>--- CREST_CKPT (Round 3): replay of a completed post-loop
++  !>--- CREST_CKPT: replay of a completed post-loop
 +  use crest_restartlog, only: trackrestart,restart_step,restart_goal_of,restart_set_kind,restart_write_dummy
 +  use crest_mdckpt, only: ckpt_steps
    implicit none
@@ -3752,12 +3751,12 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
    real(wp) :: temp,newtemp
    character(len=80) :: atmp
    
-+!>--- CREST_CKPT (Round 3): replaying a completed post-loop on the way to a goal in a
++!>--- CREST_CKPT: replaying a completed post-loop on the way to a goal in a
 +!>    later MAINLOOP pass. The rotamer-MD batch below (one tracked step, multimd2) is
 +!>    skipped, but this setup reads <ensnam> (crest_conformers.xyz) BEFORE that tracked
 +!>    call. A later pass's collectcre (rmcres) deletes that file, so a resume or rewind
 +!>    whose snapshot lies between a later post-loop entry and its first CREGEN found no
-+!>    file and stopped with 'empty ensemble' (F5 row T027_fallback). Only the tracker
++!>    file and stopped with 'empty ensemble'. Only the tracker
 +!>    count matters here: do exactly what the skipped multimd2 call does. adjustnormmd
 +!>    stays first, because it changes env just as in the original run.
 +  if (ckpt_steps() > 0) then
@@ -3784,7 +3783,7 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
    use crest_data
    use iomod
    use utilities
-+  !>--- CREST_CKPT (SYNTHESIS C.5 G3): replay the GC go/no-go decision
++  !>--- CREST_CKPT: replay the GC go/no-go decision
 +  use crest_restartlog, only: restart_replaying,restart_decision,restart_write_dummy
 +  use crest_mdckpt, only: ckpt_steps
    implicit none
@@ -3802,13 +3801,13 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
 -    call touch(trim(tmppath)) 
 +    call touch(trim(tmppath))
 +    if (ckpt_steps() > 0.and.restart_replaying()) then
-+      !>--- CREST_CKPT G3: replaying, the crossing would see a one-structure
++      !>--- CREST_CKPT: replaying, the crossing would see a one-structure
 +      !>    dummy (maxgen=0) and skip the GC's tracked steps; use the logged decision
 +      imax = merge(1,0,restart_decision('GCN',.false.))
 +      if (imax > 0) call restart_write_dummy('confcross.xyz')
 +    else
      call crest_crossing(env,imax,trim(refnam),env%gcmaxparent)
-+      if (ckpt_steps() > 0) ldum = restart_decision('GCN',imax >= 1) !> CREST_CKPT G3: log it
++      if (ckpt_steps() > 0) ldum = restart_decision('GCN',imax >= 1) !> CREST_CKPT: log it
 +    end if
      if (imax .lt. 1) then
        call remove(trim(tmppath))
@@ -3819,9 +3818,9 @@ diff -ruN --exclude=subprojects upstream/src/algos/search_conformers.f90 v2tree/
  end subroutine crest_newcross3
 -
 -
-diff -ruN --exclude=subprojects upstream/src/algos/setuptest.f90 v2tree/src/algos/setuptest.f90
---- upstream/src/algos/setuptest.f90	2026-09-25 14:45:13
-+++ v2tree/src/algos/setuptest.f90	2026-10-07 15:48:04
+diff -ruN a/src/algos/setuptest.f90 b/src/algos/setuptest.f90
+--- a/src/algos/setuptest.f90
++++ b/src/algos/setuptest.f90
 @@ -61,6 +61,8 @@
  
    type(calcdata) :: tmpcalc
@@ -3911,9 +3910,9 @@ diff -ruN --exclude=subprojects upstream/src/algos/setuptest.f90 v2tree/src/algo
    success = (io == 0)
    call trialOPT_warning(env,molopt,success)
  !>--- if the checks were successfull, env%ref is overwritten
-diff -ruN --exclude=subprojects upstream/src/algos/singlepoint.f90 v2tree/src/algos/singlepoint.f90
---- upstream/src/algos/singlepoint.f90	2026-09-25 14:45:13
-+++ v2tree/src/algos/singlepoint.f90	2026-10-07 16:34:21
+diff -ruN a/src/algos/singlepoint.f90 b/src/algos/singlepoint.f90
+--- a/src/algos/singlepoint.f90
++++ b/src/algos/singlepoint.f90
 @@ -44,6 +44,9 @@
    character(len=80) :: atmp
  !========================================================================================!
@@ -4008,9 +4007,9 @@ diff -ruN --exclude=subprojects upstream/src/algos/singlepoint.f90 v2tree/src/al
    return
  end subroutine crest_ensemble_singlepoints
 -
-diff -ruN --exclude=subprojects upstream/src/calculator/CMakeLists.txt v2tree/src/calculator/CMakeLists.txt
---- upstream/src/calculator/CMakeLists.txt	2026-09-25 14:45:13
-+++ v2tree/src/calculator/CMakeLists.txt	2026-09-25 20:56:45
+diff -ruN a/src/calculator/CMakeLists.txt b/src/calculator/CMakeLists.txt
+--- a/src/calculator/CMakeLists.txt
++++ b/src/calculator/CMakeLists.txt
 @@ -28,6 +28,7 @@
    "${dir}/oniom_hessian.F90"
    "${dir}/nonadiabatic.f90"
@@ -4027,9 +4026,9 @@ diff -ruN --exclude=subprojects upstream/src/calculator/CMakeLists.txt v2tree/sr
  
  
  
-diff -ruN --exclude=subprojects upstream/src/calculator/api_engrad.f90 v2tree/src/calculator/api_engrad.f90
---- upstream/src/calculator/api_engrad.f90	2026-09-25 14:45:13
-+++ v2tree/src/calculator/api_engrad.f90	2026-10-07 11:24:18
+diff -ruN a/src/calculator/api_engrad.f90 b/src/calculator/api_engrad.f90
+--- a/src/calculator/api_engrad.f90
++++ b/src/calculator/api_engrad.f90
 @@ -101,9 +101,14 @@
      !$omp end critical
  
@@ -4045,9 +4044,9 @@ diff -ruN --exclude=subprojects upstream/src/calculator/api_engrad.f90 v2tree/sr
      if (iostatus /= 0) return
      if(.not.calc%prstdout) &
      & call api_print_e_grd(pr,calc%prch,mol,energy,grad)
-diff -ruN --exclude=subprojects upstream/src/calculator/calc_type.f90 v2tree/src/calculator/calc_type.f90
---- upstream/src/calculator/calc_type.f90	2026-09-25 14:45:13
-+++ v2tree/src/calculator/calc_type.f90	2026-09-25 20:56:45
+diff -ruN a/src/calculator/calc_type.f90 b/src/calculator/calc_type.f90
+--- a/src/calculator/calc_type.f90
++++ b/src/calculator/calc_type.f90
 @@ -133,6 +133,8 @@
  
  !>--- API constructs
@@ -4077,9 +4076,9 @@ diff -ruN --exclude=subprojects upstream/src/calculator/calc_type.f90 v2tree/src
      if (any((/jobtype%tblite,jobtype%xtbsys,jobtype%gfn0,jobtype%gfn0occ/) == self%id)) then
        write (atmp,*) 'Fermi temperature'
        write (iunit,fmt2) atmp,self%etemp
-diff -ruN --exclude=subprojects upstream/src/calculator/calculator.F90 v2tree/src/calculator/calculator.F90
---- upstream/src/calculator/calculator.F90	2026-09-25 14:45:13
-+++ v2tree/src/calculator/calculator.F90	2026-10-07 17:12:15
+diff -ruN a/src/calculator/calculator.F90 b/src/calculator/calculator.F90
+--- a/src/calculator/calculator.F90
++++ b/src/calculator/calculator.F90
 @@ -26,6 +26,8 @@
  !>--- potentials and API's
    use subprocess_engrad !> driver exports for subprocesses
@@ -4320,9 +4319,9 @@ diff -ruN --exclude=subprojects upstream/src/calculator/calculator.F90 v2tree/sr
      if (allocated(dipl)) deallocate (dipl)
      if (allocated(dipr)) deallocate (dipr)
      deallocate (gradl_tmp,gradr_tmp)
-diff -ruN --exclude=subprojects upstream/src/calculator/cuda/crest_cuda_bridge.cpp v2tree/src/calculator/cuda/crest_cuda_bridge.cpp
---- upstream/src/calculator/cuda/crest_cuda_bridge.cpp	1969-12-31 18:00:00
-+++ v2tree/src/calculator/cuda/crest_cuda_bridge.cpp	2026-10-12 04:44:02
+diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/crest_cuda_bridge.cpp
+--- a/src/calculator/cuda/crest_cuda_bridge.cpp
++++ b/src/calculator/cuda/crest_cuda_bridge.cpp
 @@ -0,0 +1,693 @@
 +#include "crest_cuda_bridge.h"
 +
@@ -4467,7 +4466,7 @@ diff -ruN --exclude=subprojects upstream/src/calculator/cuda/crest_cuda_bridge.c
 +    return true;
 +}
 +
-+/* v11 multi-GPU experiment. CREST_CUDA_MULTI_DEVICE=1 (read once per process)
++/* Opt-in multi-GPU placement. CREST_CUDA_MULTI_DEVICE=1 (read once per process)
 + * places each new session round-robin on device k % ndev of the visible
 + * devices. Unset, any other value, or fewer than two visible devices: the
 + * stock single-device path (the caller's current device) is used.
@@ -4697,7 +4696,7 @@ diff -ruN --exclude=subprojects upstream/src/calculator/cuda/crest_cuda_bridge.c
 +    return CREST_CUDA_SUCCESS;
 +}
 +
-+// Additive worker/lease experiment. The legacy implementation above is intact.
++// Worker/lease API, added next to the session API above (which is unchanged).
 +#include <thread>
 +
 +namespace {
@@ -4775,7 +4774,7 @@ diff -ruN --exclude=subprojects upstream/src/calculator/cuda/crest_cuda_bridge.c
 +    crest_cuda_error cleanup_error{};
 +    ++w.receipt.physical_destroy_attempts;
 +    crest_cuda_destroy_ex(s, &cleanup_error);
-+    s = nullptr; // Legacy destroy consumes its host owner even on failure.
++    s = nullptr; // Session destroy consumes its host owner even on failure.
 +    ++w.receipt.physical_owners_consumed;
 +    --w.receipt.physical_live_owners;
 +    if (cleanup_error.status) ++w.receipt.cleanup_failures;
@@ -4894,7 +4893,7 @@ diff -ruN --exclude=subprojects upstream/src/calculator/cuda/crest_cuda_bridge.c
 +    lease->configuration = configuration;
 +    lease->cache_eligible = w->receipt.active_leases == 0;
 +    if (lease->cache_eligible) {
-+        // v11: with multi-device placement the worker's idle owner lives on its
++        // With multi-device placement the worker's idle owner lives on its
 +        // round-robin device, not on the caller's current device; reuse it.
 +        if (w->idle && (multi_device_count() > 1 || w->idle->device == device) && w->idle->n == n &&
 +            w->idle_configuration == configuration) {
@@ -4922,7 +4921,7 @@ diff -ruN --exclude=subprojects upstream/src/calculator/cuda/crest_cuda_bridge.c
 +        crest_cuda_create_ex(n, &owner, error);
 +        if (error->status) {
 +            ++w->receipt.failed_creations;
-+            // Later errors from legacy creation are its attempted cleanup.
++            // Later errors from session creation are its attempted cleanup.
 +            if (error->secondary_count) ++w->receipt.cleanup_failures;
 +            merge_error(w->receipt.error, *error);
 +            delete lease;
@@ -5017,9 +5016,9 @@ diff -ruN --exclude=subprojects upstream/src/calculator/cuda/crest_cuda_bridge.c
 +    delete lease;
 +    return error->status;
 +}
-diff -ruN --exclude=subprojects upstream/src/calculator/cuda/crest_cuda_bridge.h v2tree/src/calculator/cuda/crest_cuda_bridge.h
---- upstream/src/calculator/cuda/crest_cuda_bridge.h	1969-12-31 18:00:00
-+++ v2tree/src/calculator/cuda/crest_cuda_bridge.h	2026-10-07 11:20:48
+diff -ruN a/src/calculator/cuda/crest_cuda_bridge.h b/src/calculator/cuda/crest_cuda_bridge.h
+--- a/src/calculator/cuda/crest_cuda_bridge.h
++++ b/src/calculator/cuda/crest_cuda_bridge.h
 @@ -0,0 +1,221 @@
 +#ifndef CREST_CUDA_BRIDGE_H
 +#define CREST_CUDA_BRIDGE_H
@@ -5154,7 +5153,7 @@ diff -ruN --exclude=subprojects upstream/src/calculator/cuda/crest_cuda_bridge.h
 +int crest_cuda_get_stats(void *handle, crest_cuda_stats *out) CREST_CUDA_NOEXCEPT;
 +int crest_cuda_get_error(void *handle, crest_cuda_error *out) CREST_CUDA_NOEXCEPT;
 +
-+/* Experimental lexical-worker scope. Legacy APIs and POD layouts above are
++/* Lexical worker scope. The session APIs and POD layouts above are
 + * unchanged. Only this exact arithmetic/library configuration is accepted.
 + * The scope is tied to std::this_thread::get_id(), not an OpenMP team index.
 + * No worker pointer is stored in a calculator/factory or implicitly destroyed.
@@ -5218,8 +5217,8 @@ diff -ruN --exclude=subprojects upstream/src/calculator/cuda/crest_cuda_bridge.h
 + * independent uncached storage and stream. Input values are never cached.
 + * All calls/lifetimes of one lease must be serialized on its opening host
 + * thread. Operation errors taint the lease and scope permanently; later calls
-+ * cannot clear them. Experimental errors are reported through mandatory PODs.
-+ * Lease handles are distinct from legacy Session handles: use only lease APIs.
++ * cannot clear them. Errors are reported through mandatory PODs.
++ * Lease handles are distinct from Session handles: use only lease APIs.
 + */
 +int crest_cuda_lease_acquire_ex(int n, int configuration, void **lease,
 +                               crest_cuda_error *error) CREST_CUDA_NOEXCEPT;
@@ -5242,9 +5241,9 @@ diff -ruN --exclude=subprojects upstream/src/calculator/cuda/crest_cuda_bridge.h
 +#endif
 +#undef CREST_CUDA_NOEXCEPT
 +#endif
-diff -ruN --exclude=subprojects upstream/src/calculator/meson.build v2tree/src/calculator/meson.build
---- upstream/src/calculator/meson.build	2026-09-25 14:45:13
-+++ v2tree/src/calculator/meson.build	2026-09-25 20:56:45
+diff -ruN a/src/calculator/meson.build b/src/calculator/meson.build
+--- a/src/calculator/meson.build
++++ b/src/calculator/meson.build
 @@ -26,6 +26,7 @@
    'oniom_hessian.F90',
    'nonadiabatic.f90',
@@ -5253,9 +5252,9 @@ diff -ruN --exclude=subprojects upstream/src/calculator/meson.build v2tree/src/c
    'api_helpers.F90',
    'api_engrad.f90', 
    'gradreader.f90',
-diff -ruN --exclude=subprojects upstream/src/calculator/tblite_api.F90 v2tree/src/calculator/tblite_api.F90
---- upstream/src/calculator/tblite_api.F90	2026-09-25 14:45:13
-+++ v2tree/src/calculator/tblite_api.F90	2026-10-07 17:57:28
+diff -ruN a/src/calculator/tblite_api.F90 b/src/calculator/tblite_api.F90
+--- a/src/calculator/tblite_api.F90
++++ b/src/calculator/tblite_api.F90
 @@ -23,8 +23,16 @@
  !====================================================!
  
@@ -5508,15 +5507,15 @@ diff -ruN --exclude=subprojects upstream/src/calculator/tblite_api.F90 v2tree/sr
  
  #else /* WITH_TBLITE */
      iostatus = 0
-diff -ruN --exclude=subprojects upstream/src/calculator/tblite_gpu_solver.F90 v2tree/src/calculator/tblite_gpu_solver.F90
---- upstream/src/calculator/tblite_gpu_solver.F90	1969-12-31 18:00:00
-+++ v2tree/src/calculator/tblite_gpu_solver.F90	2026-10-07 15:52:23
+diff -ruN a/src/calculator/tblite_gpu_solver.F90 b/src/calculator/tblite_gpu_solver.F90
+--- a/src/calculator/tblite_gpu_solver.F90
++++ b/src/calculator/tblite_gpu_solver.F90
 @@ -0,0 +1,466 @@
 +! This file is part of crest.
 +! SPDX-Identifier: LGPL-3.0-or-later
 +
-+! CUDA replaces the generalized symmetric eigensolve. The default-off isolated
-+! density experiment also overrides only ordinary-density multiplication.
++! CUDA replaces the generalized symmetric eigensolve. With
++! WITH_TBLITE_GPU_DENSITY_EXPERIMENT the ordinary-density multiplication is overridden too.
 +! CPU Fermi filling and energy-weighted density remain the pinned operations.
 +#if defined(WITH_TBLITE_GPU_DENSITY_EXPERIMENT) && !defined(WITH_TBLITE_GPU)
 +#error "WITH_TBLITE_GPU_DENSITY_EXPERIMENT requires WITH_TBLITE_GPU"
@@ -5946,7 +5945,7 @@ diff -ruN --exclude=subprojects upstream/src/calculator/tblite_gpu_solver.F90 v2
 +        ! unconsumed rejection cannot safely deallocate this owning solver.
 +        if (c_associated(self%handle)) error stop 1
 +#else
-+        ! Legacy destruction consumes the owner, including failed cleanup.
++        ! Session destruction consumes the owner, including failed cleanup.
 +        ! Without a live caller checkpoint, keep the previous hard failure.
 +        if (.not.associated(current_call)) error stop 1
 +#endif
@@ -5978,20 +5977,19 @@ diff -ruN --exclude=subprojects upstream/src/calculator/tblite_gpu_solver.F90 v2
 +  end subroutine
 +#endif
 +end module crest_tblite_gpu_solver
-diff -ruN --exclude=subprojects upstream/src/cuda_atm/crest_atm_gpu.cu v2tree/src/cuda_atm/crest_atm_gpu.cu
---- upstream/src/cuda_atm/crest_atm_gpu.cu	1969-12-31 18:00:00
-+++ v2tree/src/cuda_atm/crest_atm_gpu.cu	2026-10-26 21:06:31
-@@ -0,0 +1,358 @@
-+// CREST GPU ATM (gpu_atm_v1): FP64 CUDA translation of dftd4 src/dftd4/damping/atm.f90
+diff -ruN a/src/cuda_atm/crest_atm_gpu.cu b/src/cuda_atm/crest_atm_gpu.cu
+--- a/src/cuda_atm/crest_atm_gpu.cu
++++ b/src/cuda_atm/crest_atm_gpu.cu
+@@ -0,0 +1,357 @@
++// CREST GPU ATM: FP64 CUDA translation of dftd4 src/dftd4/damping/atm.f90
 +// get_atm_dispersion_derivs (dftd4 7b2ff85, as built into CREST 3.0.2 cfdc301 / tblite 0.5.0), molecular case.
 +// SPDX-License-Identifier: LGPL-3.0-or-later
 +//
-+// Formula translation follows the accepted isolated primitive implementation/d4_atm_primitive_v1/atm.cu
-+// (normal 55/55 gates, job 16707276): every per-triple floating-point expression keeps the native operand order
-+// and association; build with --fmad=false and without --use_fast_math so no FMA contraction happens (production
-+// x86-64 has none either). Per triple, only pow() can differ from glibc (last bits).
++// Every per-triple floating-point expression keeps the native operand order and association; build with
++// --fmad=false and without --use_fast_math so no FMA contraction happens (the x86-64 CPU build has none either).
++// Per triple, only pow() can differ from glibc (last bits).
 +//
-+// What is different from that primitive (performance, not formulas):
++// How the work is laid out on the GPU (performance only; the formulas are the native ones):
 +//  * Parallel layout. One block per (atom a, split s); the block builds a's ordered cutoff neighbour list in shared
 +//    memory, and its threads stride over all neighbour pairs (b > c). For each pair, the triple {a,b,c} is sorted to
 +//    the native roles i > j > k and evaluated with the native expressions; only a's own contributions (energy/3,
@@ -6340,11 +6338,11 @@ diff -ruN --exclude=subprojects upstream/src/cuda_atm/crest_atm_gpu.cu v2tree/sr
 +    else g_cpu_fallbacks.fetch_add(1);
 +    return rc;
 +}
-diff -ruN --exclude=subprojects upstream/src/cuda_atm/crest_atm_gpu.h v2tree/src/cuda_atm/crest_atm_gpu.h
---- upstream/src/cuda_atm/crest_atm_gpu.h	1969-12-31 18:00:00
-+++ v2tree/src/cuda_atm/crest_atm_gpu.h	2026-10-26 21:06:31
+diff -ruN a/src/cuda_atm/crest_atm_gpu.h b/src/cuda_atm/crest_atm_gpu.h
+--- a/src/cuda_atm/crest_atm_gpu.h
++++ b/src/cuda_atm/crest_atm_gpu.h
 @@ -0,0 +1,46 @@
-+/* CREST GPU ATM (gpu_atm_v1): FP64 CUDA evaluation of the DFT-D4 Axilrod-Teller-Muto three-body dispersion
++/* CREST GPU ATM: FP64 CUDA evaluation of the DFT-D4 Axilrod-Teller-Muto three-body dispersion
 + * energy and all derivatives, matching dftd4 src/dftd4/damping/atm.f90 get_atm_dispersion_derivs
 + * (dftd4 7b2ff85, the copy built into CREST 3.0.2 cfdc301 / tblite 0.5.0) for the molecular case
 + * (exactly one, zero, lattice translation).
@@ -6390,12 +6388,11 @@ diff -ruN --exclude=subprojects upstream/src/cuda_atm/crest_atm_gpu.h v2tree/src
 +}
 +#endif
 +#endif
-diff -ruN --exclude=subprojects upstream/src/cuda_atm/crest_atm_triple.inc v2tree/src/cuda_atm/crest_atm_triple.inc
---- upstream/src/cuda_atm/crest_atm_triple.inc	1969-12-31 18:00:00
-+++ v2tree/src/cuda_atm/crest_atm_triple.inc	2026-10-26 21:06:31
-@@ -0,0 +1,146 @@
-+// CREST GPU ATM (gpu_atm_v1): per-pair / per-triple FP64 math shared by the CUDA kernel (crest_atm_gpu.cu) and the
-+// local host check (test/local_check.cpp), so both run the identical expressions.
+diff -ruN a/src/cuda_atm/crest_atm_triple.inc b/src/cuda_atm/crest_atm_triple.inc
+--- a/src/cuda_atm/crest_atm_triple.inc
++++ b/src/cuda_atm/crest_atm_triple.inc
+@@ -0,0 +1,145 @@
++// CREST GPU ATM: per-pair / per-triple FP64 math of the CUDA kernel (crest_atm_gpu.cu).
 +// Translation of dftd4 src/dftd4/damping/atm.f90 (7b2ff85) get_atm_dispersion_derivs, molecular case.
 +// SPDX-License-Identifier: LGPL-3.0-or-later
 +//
@@ -6540,9 +6537,9 @@ diff -ruN --exclude=subprojects upstream/src/cuda_atm/crest_atm_triple.inc v2tre
 +}
 +
 +#endif
-diff -ruN --exclude=subprojects upstream/src/dynamics/CMakeLists.txt v2tree/src/dynamics/CMakeLists.txt
---- upstream/src/dynamics/CMakeLists.txt	2026-09-25 14:45:13
-+++ v2tree/src/dynamics/CMakeLists.txt	2026-10-11 22:49:31
+diff -ruN a/src/dynamics/CMakeLists.txt b/src/dynamics/CMakeLists.txt
+--- a/src/dynamics/CMakeLists.txt
++++ b/src/dynamics/CMakeLists.txt
 @@ -17,6 +17,7 @@
  set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
  
@@ -6551,9 +6548,9 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/CMakeLists.txt v2tree/src/
    "${dir}/dynamics_module.f90"
    "${dir}/metadynamics_module.f90"
    "${dir}/shake_module.f90"
-diff -ruN --exclude=subprojects upstream/src/dynamics/crest_mdckpt.F90 v2tree/src/dynamics/crest_mdckpt.F90
---- upstream/src/dynamics/crest_mdckpt.F90	1969-12-31 18:00:00
-+++ v2tree/src/dynamics/crest_mdckpt.F90	2026-10-12 04:44:02
+diff -ruN a/src/dynamics/crest_mdckpt.F90 b/src/dynamics/crest_mdckpt.F90
+--- a/src/dynamics/crest_mdckpt.F90
++++ b/src/dynamics/crest_mdckpt.F90
 @@ -0,0 +1,748 @@
 +!================================================================================!
 +! This file is part of crest.
@@ -6573,7 +6570,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/crest_mdckpt.F90 v2tree/sr
 +!================================================================================!
 +
 +!================================================================================!
-+! module crest_mdckpt   (CREST_CKPT, SYNTHESIS C.1)
++! module crest_mdckpt
 +!
 +! Leaf helper module for the opt-in MD/MTD checkpoint feature.
 +! Everything here is inert unless the environment variable CREST_CKPT
@@ -6594,7 +6591,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/crest_mdckpt.F90 v2tree/sr
 +! ck_mdfile, ck_unique, wfn_* take no lock. ckpt_steps uses its own lock
 +! (crest_ckpt_env).
 +!
-+! THREADS (Round 2): itoa and ck_path return deferred-length strings
++! THREADS: itoa and ck_path return deferred-length strings
 +! (character(len=:),allocatable). gfortran's code for such function results
 +! is not thread-safe: called concurrently they returned empty or truncated
 +! names (e.g. 'crest_ckpt/step_1/md_.ckpt') and corrupted the heap. They are
@@ -6610,7 +6607,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/crest_mdckpt.F90 v2tree/sr
 +  implicit none
 +  private
 +
-+!>--- CREST_CKPT file identity (SYNTHESIS B.1)
++!>--- CREST_CKPT file identity
 +  integer,parameter,public :: CK_MAGIC = 1129008177
 +  integer,parameter,public :: CK_VER = 1
 +
@@ -6622,7 +6619,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/crest_mdckpt.F90 v2tree/sr
 +  logical,public :: ck_fullwfn = .false.
 +  character(len=256),public :: ck_dir = ' '
 +
-+!>--- temporary storage of one tblite wavefunction record (SYNTHESIS B.1 (8))
++!>--- temporary storage of one tblite wavefunction record
 +  type,public :: wfnbuf
 +    integer :: j = 0
 +    integer :: nspin = 0
@@ -6723,8 +6720,8 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/crest_mdckpt.F90 v2tree/sr
 +!* Arm tracked step <stepid> (serial driver context only).
 +!* Creates crest_ckpt/ and crest_ckpt/step_<stepid>/ and then purges only
 +!* the feature's own folders crest_ckpt/step_k with k < stepid
-+!* (SYNTHESIS B.0 purge rule; deviation D1: plain Fortran loop over the
-+!*  existing directories with CREST's rmrf, no shell 'for' loop).
++!* (a plain Fortran loop over the existing directories with CREST's
++!*  rmrf, no shell loop).
 +!*************************************************************************
 +    integer,intent(in) :: stepid
 +    logical,intent(in) :: resume
@@ -6760,7 +6757,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/crest_mdckpt.F90 v2tree/sr
 +      return
 +    end if
 +
-+    !>--- CREST_CKPT D1: remove only existing lower-numbered step folders
++    !>--- CREST_CKPT: remove only existing lower-numbered step folders
 +    do k = 1,stepid-1
 +      d = 'crest_ckpt/step_'//itoa(k)
 +      if (directory_exist(d)) call rmrf(d)
@@ -6809,7 +6806,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/crest_mdckpt.F90 v2tree/sr
 +
 +  function ck_epoch() result(e)
 +!> wall-clock time in Unix seconds (GNU time8), printed on the 'armed' and
-+!> 'resumed after step' lines so that per-requeue loss can be measured (F3)
++!> 'resumed after step' lines so that per-requeue loss can be measured
 +    integer(int64) :: e
 +    e = int(time8(),int64)
 +  end function ck_epoch
@@ -7015,7 +7012,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/crest_mdckpt.F90 v2tree/sr
 +
 +  function xyz_key(nat,nall,xyz) result(k)
 +!*****************************************************************
-+!* exact content key of an ensemble (SYNTHESIS B.3):
++!* exact content key of an ensemble:
 +!* bit patterns of s1 = sum(xyz), s2 = sum(xyz**2) and
 +!* s3 = sum_z z*sum(xyz(:,:,z)), all summed serially.
 +!*****************************************************************
@@ -7303,14 +7300,14 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/crest_mdckpt.F90 v2tree/sr
 +!========================================================================================!
 +!========================================================================================!
 +end module crest_mdckpt
-diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree/src/dynamics/dynamics_module.f90
---- upstream/src/dynamics/dynamics_module.f90	2026-09-25 14:45:13
-+++ v2tree/src/dynamics/dynamics_module.f90	2026-10-12 04:44:02
+diff -ruN a/src/dynamics/dynamics_module.f90 b/src/dynamics/dynamics_module.f90
+--- a/src/dynamics/dynamics_module.f90
++++ b/src/dynamics/dynamics_module.f90
 @@ -121,6 +121,11 @@
  !* the coordinate propagation is made with an 
  !* Leap-Frog algorithm (Velert-type algo)
  !*************************************************************
-+    !>--- CREST_CKPT (SYNTHESIS C.2a): procedure-level use, so dynamics_module.mod is unchanged
++    !>--- CREST_CKPT: procedure-level use, so dynamics_module.mod is unchanged
 +    !>    (thread-safe helpers only: no deferred-length string results inside the MD threads)
 +    use crest_mdckpt,only:ck_every,ck_step,ck_resume,ck_nowfn,ck_dir,CK_MAGIC,CK_VER, &
 +    &   ck_mdfile,ck_sync,ck_commit,truncate_lines,xyz_key,wfnbuf,wfn_write, &
@@ -7322,7 +7319,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
      integer :: i,j,k,l,ich,och,io
      integer :: dcount,printcount
      logical :: ex,fail,bdump
-+    !>--- CREST_CKPT locals (SYNTHESIS C.2a)
++    !>--- CREST_CKPT locals
 +    logical :: ck_on,ck_res,ck_done,ck_warned,ck_in
 +    integer :: tstart,ck_nw,ck_ev,ck_io
 +    real(wp) :: ck_tw
@@ -7335,7 +7332,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
        trajectory = trim(commentline)
      end if
 +
-+    !>--- CREST_CKPT (SYNTHESIS C.2b): only MDs of an armed tracked batch whose trajectory
++    !>--- CREST_CKPT: only MDs of an armed tracked batch whose trajectory
 +    !>    lives in the armed step folder; trialMD (md_index 0) and other runtypes untouched
 +    ck_on = .false.
 +    ck_in = .false.
@@ -7365,7 +7362,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
 +      !>--- a fresh start must never later pick up a checkpoint of another trajectory
 +      !>    (earlier attempt, rejected file): move it and its trajectory aside, nothing is deleted
 +      if (.not.ck_res) call md_ckpt_retire()
-+      !>--- CREST_CKPT (Round 2): an MD that starts fresh starts from a freshly set-up
++      !>--- CREST_CKPT: an MD that starts fresh starts from a freshly set-up
 +      !>    calculator, never from the wavefunction of the MD this thread ran before (or of
 +      !>    the per-thread start engrad). A resumed batch, in which finished MDs return at
 +      !>    once, then gives every fresh MD the same start state as the uninterrupted run.
@@ -7380,11 +7377,11 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
      !$omp critical
 -    open (newunit=trj,file=trajectory)
 +    if (ck_res) then
-+      !>--- CREST_CKPT (SYNTHESIS C.2c): trajectory already cut back to dat%dumped frames
++      !>--- CREST_CKPT: trajectory already cut back to dat%dumped frames
 +      !>    ('unknown' instead of 'old': a resume with dumped=0 may have no file yet)
 +      open (newunit=trj,file=trajectory,status='unknown',position='append')
 +    else if (ck_in) then
-+      !>--- CREST_CKPT (SYNTHESIS C.2c): the step folder may hold an older, longer file
++      !>--- CREST_CKPT: the step folder may hold an older, longer file
 +      open (newunit=trj,file=trajectory,status='replace')
 +    else
 +      open (newunit=trj,file=trajectory)
@@ -7398,7 +7395,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
  
 -    dcount = 0
 -    printcount = 1
-+    if (.not.ck_res) then  !> CREST_CKPT (SYNTHESIS C.2d): restored counters are kept
++    if (.not.ck_res) then  !> CREST_CKPT: restored counters are kept
 +      dcount = 0
 +      printcount = 1
 +    end if
@@ -7406,7 +7403,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
  !===============================================================!
  !>--- begin MD loop
 -    MD: do t = 1,dat%length_steps
-+    MD: do t = tstart,dat%length_steps  !> CREST_CKPT (SYNTHESIS C.2e): tstart = 1 unless resumed
++    MD: do t = tstart,dat%length_steps  !> CREST_CKPT: tstart = 1 unless resumed
        call initsignal()
  
        !>>-- STEP 1: calculate energy and forces
@@ -7425,7 +7422,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
        dcount = dcount+1
        printcount = printcount+1
  
-+      !>--- CREST_CKPT (SYNTHESIS C.2f): end of step t holds exactly the state
++      !>--- CREST_CKPT: end of step t holds exactly the state
 +      !>    step t+1 starts from (x(t+dt), v(t+dt/2), bias, wfn converged at x(t))
 +      if (ck_on) then
 +        if (mod(t,ck_ev) == 0.and.t < dat%length_steps) then
@@ -7437,7 +7434,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
  !>--- finish MD loop
  !===============================================================!
  !===============================================================!
-+!>--- CREST_CKPT (SYNTHESIS C.2g): final 'done' checkpoint, also for the term=1/2
++!>--- CREST_CKPT: final 'done' checkpoint, also for the term=1/2
 +!>    early exits; GPU failures are not recorded and re-run on resume
 +    if (ck_on) then
 +      if (.not.ck_done.and.term /= crest_gpu_error) then
@@ -7474,12 +7471,12 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
  
      return
 +!========================================================================================!
-+!>--- CREST_CKPT internal procedures of dynamics (SYNTHESIS C.2h, file format B.1).
++!>--- CREST_CKPT internal procedures of dynamics.
 +!>    Internal, so the public interface and dynamics_module.mod are unchanged.
 +  contains
 +
 +    logical function md_ckpt_supported() result(ok)
-+!>--- CREST_CKPT: only potentials whose full state is in B.1 (RMSD MTD) are checkpointed
++!>--- CREST_CKPT: only potentials whose full state the checkpoint holds (RMSD MTD) are checkpointed
 +      integer :: k
 +      ok = allocated(dat%blocke).and.allocated(dat%blockt).and.allocated(dat%blockrege)
 +      if (dat%npot > 0) then
@@ -7530,7 +7527,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
 +    end subroutine md_ckpt_retire
 +
 +    logical function md_ckpt_ready() result(ok)
-+!>--- CREST_CKPT (B.1): no RNG draw remains once every cv_rmsd potential has ncur >= 1
++!>--- CREST_CKPT: no RNG draw remains once every cv_rmsd potential has ncur >= 1
 +      integer :: k
 +      ok = .true.
 +      if (dat%simtype /= type_mtd) return
@@ -7540,7 +7537,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
 +    end function md_ckpt_ready
 +
 +    subroutine md_ckpt_write(td,done)
-+!>--- CREST_CKPT (B.1): write md_<i>.ckpt via .tmp + fsync + rename.
++!>--- CREST_CKPT: write md_<i>.ckpt via .tmp + fsync + rename.
 +!>    Any failure keeps the previous checkpoint and never stops the MD.
 +      integer,intent(in) :: td
 +      logical,intent(in) :: done
@@ -7550,7 +7547,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
 +
 +      call system_clock(c0,cr)
 +      call ck_mdfile(dat%md_index,'.ckpt',fck)
-+      !>--- frames 1..dat%dumped must be durable before a checkpoint counts them (B.2)
++      !>--- frames 1..dat%dumped must be durable before a checkpoint counts them
 +      call ck_sync(trj,ios)
 +      if (ios /= 0) then
 +        call md_ckpt_warn('trajectory flush/fsync failed, checkpoint skipped')
@@ -7603,7 +7600,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
 +    end subroutine md_ckpt_write
 +
 +    subroutine md_ckpt_read(ok)
-+!>--- CREST_CKPT (C.2h): read md_<i>.ckpt into temporaries, validate, cut the
++!>--- CREST_CKPT: read md_<i>.ckpt into temporaries, validate, cut the
 +!>    trajectory to dat%dumped frames, then apply. Missing file: silent fresh start.
 +!>    Any failure before the apply step: nothing is changed, the MD starts fresh.
 +      logical,intent(out) :: ok
@@ -7627,7 +7624,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
 +      call ck_mdfile(dat%md_index,'.ckpt',fck)
 +      inquire (file=trim(fck),exist=ex)
 +      if (.not.ex) then
-+        !>--- never silent (Round 2): a resume that finds no checkpoint says so
++        !>--- never silent: a resume that finds no checkpoint says so
 +        !$omp critical (crest_ckpt_io)
 +        write (stdout,'(a,i0,a,i0)',iostat=ios) 'CREST_CKPT> MD ',dat%md_index, &
 +        &      ': no checkpoint found ('//trim(fck)//'), starting fresh, epoch ',ck_epoch()
@@ -7760,7 +7757,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
 +        !$omp end critical (crest_ckpt_io)
 +      end if
 +
-+      !>--- cut the trajectory back to the frames this checkpoint counts (B.2)
++      !>--- cut the trajectory back to the frames this checkpoint counts
 +      if (len_trim(why) == 0) then
 +        call truncate_lines(trajectory,int(pg(6),int64)*int(mol%nat+2,int64),okt)
 +        if (.not.okt) write (why,'(a,i0,a)') 'trajectory shorter than ',pg(6),' frames'
@@ -7855,7 +7852,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
  ! initialize MD velocities, either by reading a restart file
  ! or by setting them randomly
    subroutine mdinitu(mol,dat,velo,mass,Ekin,pr)
-+    use crest_mdckpt,only:ckpt_steps  !> CREST_CKPT (SYNTHESIS C.2i), procedure-level use
++    use crest_mdckpt,only:ckpt_steps  !> CREST_CKPT, procedure-level use
      implicit none
      type(coord) :: mol
      type(mddata) :: dat
@@ -7863,7 +7860,7 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
      integer,allocatable :: iseed(:)
      logical :: newvelos
      integer :: i
-+    !>--- CREST_CKPT locals (SYNTHESIS C.2i, test-only seed)
++    !>--- CREST_CKPT locals (test-only seed)
 +    character(len=64) :: ck_sval
 +    integer :: ck_sl,ck_sst,ck_sio,ck_seed,k
 +    logical :: ck_seeded
@@ -7875,9 +7872,9 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
          call random_seed(put=iseed)
        else
 -        call random_seed()
-+        !>--- CREST_CKPT (SYNTHESIS C.2i), test-only: CREST_MD_SEED=<s> makes the
-+        !>    initial velocities reproducible per MD; production never sets it.
-+        !>    Read only when CREST_CKPT>0, so the unset feature stays fully inert (D2).
++        !>--- CREST_CKPT, test-only: CREST_MD_SEED=<s> makes the
++        !>    initial velocities reproducible per MD; normal runs never set it.
++        !>    Read only when CREST_CKPT>0, so the unset feature stays fully inert.
 +        ck_seeded = .false.
 +        if (ckpt_steps() > 0) then
 +          ck_sval = ' '
@@ -7901,9 +7898,9 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/dynamics_module.f90 v2tree
        end if
        eperat = Ekin/(3.0_wp*float(mol%nat))
        do i = 1,mol%nat
-diff -ruN --exclude=subprojects upstream/src/dynamics/meson.build v2tree/src/dynamics/meson.build
---- upstream/src/dynamics/meson.build	2026-09-25 14:45:13
-+++ v2tree/src/dynamics/meson.build	2026-10-11 22:49:31
+diff -ruN a/src/dynamics/meson.build b/src/dynamics/meson.build
+--- a/src/dynamics/meson.build
++++ b/src/dynamics/meson.build
 @@ -15,6 +15,7 @@
  # along with crest.  If not, see <https://www.gnu.org/licenses/>.
  
@@ -7912,14 +7909,14 @@ diff -ruN --exclude=subprojects upstream/src/dynamics/meson.build v2tree/src/dyn
    'dynamics_module.f90',
    'metadynamics_module.f90',
    'shake_module.f90',
-diff -ruN --exclude=subprojects upstream/src/legacy_algos/confscript2_misc.f90 v2tree/src/legacy_algos/confscript2_misc.f90
---- upstream/src/legacy_algos/confscript2_misc.f90	2026-09-25 14:45:13
-+++ v2tree/src/legacy_algos/confscript2_misc.f90	2026-10-12 04:44:02
+diff -ruN a/src/legacy_algos/confscript2_misc.f90 b/src/legacy_algos/confscript2_misc.f90
+--- a/src/legacy_algos/confscript2_misc.f90
++++ b/src/legacy_algos/confscript2_misc.f90
 @@ -1027,6 +1027,9 @@
    use iomod
    use strucrd,only:rdensembleparam,rdensemble
    use utilities
-+  !> CREST_CKPT (SYNTHESIS C.6): logged/replayed widening decision
++  !> CREST_CKPT: logged/replayed widening decision
 +  use crest_restartlog,only:restart_decision,restart_replaying,restart_step,restart_goal_of,trackensemble
 +  use crest_mdckpt,only:ckpt_steps
    implicit none
@@ -7943,7 +7940,7 @@ diff -ruN --exclude=subprojects upstream/src/legacy_algos/confscript2_misc.f90 v
    call checkname_xyz(crefile,inpnam,outnam)
    call confg_chk3(env)
 -  call remaining_in(outnam,ewin,nallout) !--- remaining number of structures
-+  !> CREST_CKPT (addition to SYNTHESIS C.6): if the widened CREGEN below is the restart
++  !> CREST_CKPT: if the widened CREGEN below is the restart
 +  !> goal, the restore at goal-1 (inside confg_chk3) has just written its input inpnam
 +  !> (recorded below), and outnam does not exist. Skip the count; WIDEN is replayed.
 +  ckgoal = .false.
@@ -7962,13 +7959,13 @@ diff -ruN --exclude=subprojects upstream/src/legacy_algos/confscript2_misc.f90 v
    if (.not.env%entropic) then !don't do this for entropy mode
      nallthr = nint(float(nallin)*nthr)
 -    if (nallout .lt. nallthr) then
-+    !> CREST_CKPT (SYNTHESIS C.6): log the 5% widening decision; replay it while skipping
++    !> CREST_CKPT: log the 5% widening decision; replay it while skipping
 +    if (restart_decision('WIDEN',nallout .lt. nallthr)) then
        write (*,'(1x,''This is less than '',i0,''% of the initial '',i0,'' structures.'')') &
        & nint(nthr*100.0d0),nallin
        write (*,'(1x,''Increasing energy window to include more...'')')
        call remove(outnam)                    !--- delete this file since it contains to few structures
-+      !> CREST_CKPT (addition to SYNTHESIS C.6): the widened CREGEN (next tracked step) reads
++      !> CREST_CKPT: the widened CREGEN (next tracked step) reads
 +      !> inpnam again, but crest.restart would only hold the first CREGEN output. Record
 +      !> inpnam now, so that a resume at the widened CREGEN restores its real input.
 +      if (ckpt_steps() > 0 .and. .not.restart_replaying()) then
@@ -7987,7 +7984,7 @@ diff -ruN --exclude=subprojects upstream/src/legacy_algos/confscript2_misc.f90 v
    use crest_data
    use strucrd,only:xyz2coord
    use utilities 
-+  !> CREST_CKPT (SYNTHESIS C.6): logged/replayed elowcheck decision
++  !> CREST_CKPT: logged/replayed elowcheck decision
 +  use crest_restartlog,only:restart_decision,restart_replaying
 +  use crest_mdckpt,only:ckpt_steps
    implicit none
@@ -7995,7 +7992,7 @@ diff -ruN --exclude=subprojects upstream/src/legacy_algos/confscript2_misc.f90 v
    real(wp) :: ediff,ethr,ewin
    logical :: lower
  
-+!>--- CREST_CKPT (SYNTHESIS C.6): while completed steps are skipped (tracker < goal),
++!>--- CREST_CKPT: while completed steps are skipped (tracker < goal),
 +!>    return the logged decision and skip the env update and the .history.xyz/coord
 +!>    writes, but KEEP the directory cleanup of the original lower branch (REQUIRED:
 +!>    otherwise crest_rotamers_* left over from a replayed iteration can shadow the
@@ -8016,14 +8013,14 @@ diff -ruN --exclude=subprojects upstream/src/legacy_algos/confscript2_misc.f90 v
      lower = .true.
      if (.not.env%allowrestart) then
        lower = .false.
-+      lower = restart_decision('ELOW',lower) !> CREST_CKPT (SYNTHESIS C.6): log (returns lower)
++      lower = restart_decision('ELOW',lower) !> CREST_CKPT: log (returns lower)
        return
      end if
      if (env%entropic) then
        write (*,'(1x,a)') 'Restart based on new lowest structure.'
        call clean_V2i
        call rmrfw('crest_entropy_rotamer_')
-+      lower = restart_decision('ELOW',lower) !> CREST_CKPT (SYNTHESIS C.6): log (returns lower)
++      lower = restart_decision('ELOW',lower) !> CREST_CKPT: log (returns lower)
        return
      end if
      !---- clean the dir
@@ -8031,14 +8028,14 @@ diff -ruN --exclude=subprojects upstream/src/legacy_algos/confscript2_misc.f90 v
      lower = .false.
    end if
  
-+!>--- CREST_CKPT (SYNTHESIS C.6): log the decision (returns lower unchanged)
++!>--- CREST_CKPT: log the decision (returns lower unchanged)
 +  lower = restart_decision('ELOW',lower)
    return
  end subroutine elowcheck
  
-diff -ruN --exclude=subprojects upstream/src/optimize/optimize_module.f90 v2tree/src/optimize/optimize_module.f90
---- upstream/src/optimize/optimize_module.f90	2026-09-25 14:45:13
-+++ v2tree/src/optimize/optimize_module.f90	2026-10-07 16:34:21
+diff -ruN a/src/optimize/optimize_module.f90 b/src/optimize/optimize_module.f90
+--- a/src/optimize/optimize_module.f90
++++ b/src/optimize/optimize_module.f90
 @@ -74,6 +74,10 @@
  
      !> initial singlepoint
@@ -8093,9 +8090,9 @@ diff -ruN --exclude=subprojects upstream/src/optimize/optimize_module.f90 v2tree
       
    end subroutine print_opt_data
  
-diff -ruN --exclude=subprojects upstream/src/parsing/parse_calcdata.f90 v2tree/src/parsing/parse_calcdata.f90
---- upstream/src/parsing/parse_calcdata.f90	2026-09-25 14:45:13
-+++ v2tree/src/parsing/parse_calcdata.f90	2026-09-25 20:56:45
+diff -ruN a/src/parsing/parse_calcdata.f90 b/src/parsing/parse_calcdata.f90
+--- a/src/parsing/parse_calcdata.f90
++++ b/src/parsing/parse_calcdata.f90
 @@ -303,6 +303,19 @@
      case ('efile')
        job%efile = kv%value_c
@@ -8116,14 +8113,14 @@ diff -ruN --exclude=subprojects upstream/src/parsing/parse_calcdata.f90 v2tree/s
      case ('tblite_level','tblite_hamiltonian')
        select case (kv%value_c)
        case ('gfn2','gfn2-xtb')
-diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlog.f90
---- upstream/src/restartlog.f90	2026-09-25 14:45:13
-+++ v2tree/src/restartlog.f90	2026-10-12 04:44:02
+diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
+--- a/src/restartlog.f90
++++ b/src/restartlog.f90
 @@ -24,6 +24,9 @@
    use crest_data
    use miscdata, only: PSE
    use iomod, only: command
-+!>--- CREST_CKPT (SYNTHESIS C.4): feature switch, fsync helper, mkdir helper
++!>--- CREST_CKPT: feature switch, fsync helper, mkdir helper
 +  use iomod, only: makedir,directory_exist
 +  use crest_mdckpt, only: ckpt_steps,ck_sync
    implicit none
@@ -8133,7 +8130,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
    real(wp),allocatable :: last_xyz(:,:,:)
    character(len=128),allocatable :: last_comments(:)
  
-+!>--- CREST_CKPT (SYNTHESIS B.4, C.4): replay identity record, decision log and
++!>--- CREST_CKPT: replay identity record, decision log and
 +!>    post-loop state. Everything below is inert unless CREST_CKPT > 0.
 +  character(len=16) :: next_kind = 'cregen' !> kind of the next tracked step (newcregen is unlabelled)
 +  character(len=16) :: cur_kind = ' '       !> kind of the current tracked step
@@ -8156,7 +8153,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
  
    public :: dump_restart,read_restart
  
-+!>--- CREST_CKPT (SYNTHESIS C.4): public additions
++!>--- CREST_CKPT: public additions
 +  public :: restart_step,restart_goal_of,restart_replaying
 +  public :: restart_set_kind,restart_set_stage
 +  public :: restart_decision,restart_post_restore_due
@@ -8173,7 +8170,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
      restart_tracker = restart_tracker+1
      if (debug) write (stdout,*) '%%% RESTART_TRACKER =',restart_tracker
  
-+!>--- CREST_CKPT (SYNTHESIS C.4): label this step by (kind,occurrence) and,
++!>--- CREST_CKPT: label this step by (kind,occurrence) and,
 +!>    at the goal step, check it against the record read from crest.restart
 +    if (ckpt_steps() > 0) then
 +      cur_kind = next_kind
@@ -8202,7 +8199,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
       character(len=*),intent(in) :: comments(nall)
  
 -    if (restart_tracker > restart_goal)then
-+    !> CREST_CKPT (SYNTHESIS D.6): track_due() == (restart_tracker > restart_goal) unless CREST_CKPT>0
++    !> CREST_CKPT: track_due() == (restart_tracker > restart_goal) unless CREST_CKPT>0
 +    if (track_due())then
        call restart_save_ensemble(fname,nat,nall,at,xyz,comments)
      if (debug) write (stdout,*) '%%% RESTART_ENSEMBLE = ',trim(fname)
@@ -8212,7 +8209,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
       character(len=50),allocatable  :: comments(:)
       integer :: i
 -    if (restart_tracker > restart_goal)then
-+    !> CREST_CKPT (SYNTHESIS D.6): track_due() == (restart_tracker > restart_goal) unless CREST_CKPT>0
++    !> CREST_CKPT: track_due() == (restart_tracker > restart_goal) unless CREST_CKPT>0
 +    if (track_due())then
        allocate(comments(nall))
        do i=1,nall
@@ -8230,11 +8227,11 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
      if( restart_tracker < restart_goal) return
  
 -    open (newunit=ich,file='crest.restart',status='replace',form='unformatted')
-+    !> CREST_CKPT (SYNTHESIS B.4, C.4): the former body is now write_restart_file,
++    !> CREST_CKPT: the former body is now write_restart_file,
 +    !> which writes crest.restart.tmp, fsyncs it and renames it (identical bytes)
 +    call write_restart_file('crest.restart')
  
-+    !> CREST_CKPT (SYNTHESIS B.5, C.4): keep a copy of the post-loop entry dump
++    !> CREST_CKPT: keep a copy of the post-loop entry dump
 +    if (ckpt_steps() > 0 .and. cur_kind == 'collect') then
 +      io = makedir('crest_ckpt')
 +      io = makedir('crest_ckpt/postloop')
@@ -8250,7 +8247,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
 +
 +  subroutine write_restart_file(fname)
 +!**************************************************************
-+!* CREST_CKPT (SYNTHESIS B.4, C.4): body of the former
++!* CREST_CKPT: body of the former
 +!* dump_restart. Writes <fname>.tmp, then fsync, close, rename.
 +!**************************************************************
 +    implicit none
@@ -8267,11 +8264,11 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
      if (debug) write (stdout,'(1x,a,a)') '%%% ensemble: ',trim(last_file)
      if (debug) write (stdout,*) '%%% nall: ',last_nall
  
-+    !> CREST_CKPT (SYNTHESIS B.4): trailing (kind,occurrence,stage) record, only
++    !> CREST_CKPT: trailing (kind,occurrence,stage) record, only
 +    !> when CREST_CKPT>0; the upstream reader stops before it and ignores it
 +    if (ckpt_steps() > 0) write (ich) cur_kind,cur_occ,cur_stage
 +
-+    !> CREST_CKPT (SYNTHESIS B.4): flush+fsync, close, atomic rename.
++    !> CREST_CKPT: flush+fsync, close, atomic rename.
 +    !> A failed flush (e.g. disk full) discards the .tmp and keeps the previous file.
 +    flush (ich,iostat=io)
 +    if (io /= 0) then
@@ -8295,7 +8292,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
  
    subroutine read_restart(env)
 +!***************************************************************
-+!* CREST_CKPT (SYNTHESIS C.4, D.2): the former body is now
++!* CREST_CKPT: the former body is now
 +!* read_restart_file. Afterwards, decide how to treat a goal in
 +!* the post-loop stage: resume at the post-loop entry (kind
 +!* 'collect'), rewind to the saved entry (CREST_RESUME_POST=
@@ -8307,7 +8304,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
 +    logical :: ex
 +    call read_restart_file(env,'crest.restart')
 +
-+    !> CREST_CKPT (SYNTHESIS C.4; post-loop default refuse unless CREST_RESUME_POST=fallback)
++    !> CREST_CKPT (post-loop default: refuse unless CREST_RESUME_POST=fallback)
 +    if (ckpt_steps() > 0 .and. goal_occ >= 0 .and. goal_stage == 'post') then
 +      post_restore = .true.
 +      if (goal_kind /= 'collect') then  !> goal lies after the post-loop entry
@@ -8323,7 +8320,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
 +          end if
 +          write (stdout,'(a,i0)') 'CREST_RESTART> new target restart step (post-loop entry): ',restart_goal
 +        else
-+          !> CREST_CKPT (deviation D3): refuse is the default
++          !> CREST_CKPT: refuse is the default
 +          write (stderr,'(a)') '**ERROR** CREST_RESTART> resume at post-loop step refused '// &
 +          &  '(CREST_RESUME_POST/=fallback or no saved entry); nothing was modified'
 +          error stop 3
@@ -8337,7 +8334,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
 +
 +  subroutine read_restart_file(env,fname)
 +!***************************************************************
-+!* CREST_CKPT (SYNTHESIS C.4): body of the former read_restart,
++!* CREST_CKPT: body of the former read_restart,
 +!* reading from <fname>, plus the trailing replay record.
 +!***************************************************************
 +    implicit none
@@ -8371,7 +8368,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
      call move_alloc(xyz, env%ref%xyz)
       
  
-+    !> CREST_CKPT (SYNTHESIS C.4): this routine may be called a second time
++    !> CREST_CKPT: this routine may be called a second time
 +    !> (post-loop rewind); read_last_ensemble allocates without checking
 +    if (allocated(last_at)) deallocate (last_at)
 +    if (allocated(last_xyz)) deallocate (last_xyz)
@@ -8382,7 +8379,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
        write(stdout,'(1x,a,i0)') 'Number of saved structures: ',last_nall
      endif
  
-+    !> CREST_CKPT (SYNTHESIS B.4, C.4): trailing (kind,occurrence,stage) record
++    !> CREST_CKPT: trailing (kind,occurrence,stage) record
 +    if (ckpt_steps() > 0) then
 +      goal_kind = ' '
 +      goal_occ = -1
@@ -8417,7 +8414,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
 +
 +!========================================================================================!
 +!========================================================================================!
-+!> CREST_CKPT (SYNTHESIS C.4): replay helpers. All inert unless CREST_CKPT > 0.
++!> CREST_CKPT: replay helpers. All inert unless CREST_CKPT > 0.
 +
 +  integer function restart_step()
 +!> current value of the restart tracker
@@ -8459,7 +8456,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
 +
 +  logical function track_due()
 +!***************************************************************************
-+!* CREST_CKPT (SYNTHESIS D.6, repeated preemption): should trackensemble
++!* CREST_CKPT (repeated preemption): should trackensemble
 +!* record? Upstream: only once the goal has been passed (tracker > goal),
 +!* so the ensembles of the re-executed goal step itself were never recorded
 +!* and the next dumps of a resumed segment carried the goal's INPUT instead
@@ -8476,7 +8473,7 @@ diff -ruN --exclude=subprojects upstream/src/restartlog.f90 v2tree/src/restartlo
 +
 +  function restart_decision(kind,val) result(dec)
 +!**************************************************************************
-+!* CREST_CKPT (SYNTHESIS C.4, B.5): control-flow decisions (kind = 'ELOW',
++!* CREST_CKPT: control-flow decisions (kind = 'ELOW',
 +!* 'WIDEN','GCN'). Running live, append "<tracker> <kind> <0|1>" to
 +!* crest_ckpt/decisions.log and return val. While completed steps are
 +!* skipped (tracker < goal), return the last logged value for

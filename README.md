@@ -44,7 +44,7 @@ git clone https://github.com/SupanthaDey9/crest-gpu-accel.git && cd crest-gpu-ac
 tests/run_tests.sh bin/crest                  # on a GPU node: single points (CPU, GPU) and a short GPU search
 ```
 
-- **Build time.** On ISU Nova a clean build took 6 minutes on 8 cores.
+- **Build time.** On ISU Nova a clean build took about 5 minutes on 8 cores.
 - **No internet on the build node:** run `./build.sh --fetch-only SRC` on a login node, then `./build.sh --sources SRC`.
 - **Specific libraries:** choose installations with `--cuda DIR` and `--openblas /path/libopenblas.so`.
 - **Other test modes:** `tests/run_tests.sh bin/crest --no-gpu` runs only the CPU single point (for example on a login node).

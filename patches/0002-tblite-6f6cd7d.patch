@@ -1,0 +1,621 @@
+diff -ruN tblite/src/tblite/classical/halogen.f90 ../../v2tree/subprojects/tblite/src/tblite/classical/halogen.f90
+--- a/src/tblite/classical/halogen.f90	2026-09-25 14:46:37
++++ b/src/tblite/classical/halogen.f90	2026-10-11 20:06:15
+@@ -316,6 +316,7 @@
+    real(wp), intent(inout) :: sigma(:, :)
+ 
+    integer :: ijk, jat, kat, xat, xzp, jzp, jtr, ktr
++   integer :: ic3, jc3
+    real(wp) :: cc, r0jx, t13, t14
+    real(wp) :: d2jx, rjx, rkx, term, aterm, xy, d2kx, d2jk
+    real(wp) :: dxj(3), dxk(3), dkj(3), dcosterm
+@@ -369,7 +370,11 @@
+       ! halogen gradient
+       gradient(:, xat) = gradient(:, xat)-dtermlj*dxj(:)
+       ! strain contribution
+-      sigma(:, :) = sigma + spread(dxj, 1, 3) * spread(dxj, 2, 3) * dtermlj
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            sigma(ic3, jc3) = sigma(ic3, jc3) + dxj(jc3) * dxj(ic3) * dtermlj
++         end do
++      end do
+ 
+       ! cosine term derivative
+       prefactor = -0.250_wp*alp*(0.5_wp-0.25_wp*term)**(alp-1.0_wp)
+@@ -382,7 +387,11 @@
+       ! halogen gradient
+       gradient(:, xat) = gradient(:, xat)-dcosterm*dxj(:)
+       ! strain contribution
+-      sigma(:, :) = sigma + spread(dxj, 1, 3) * spread(dxj, 2, 3) * dcosterm
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            sigma(ic3, jc3) = sigma(ic3, jc3) + dxj(jc3) * dxj(ic3) * dcosterm
++         end do
++      end do
+       ! KX part
+       dcosterm = 2.0_wp/rjx - term/rkx
+       dcosterm = dcosterm*prefactor/rkx
+@@ -391,7 +400,11 @@
+       ! halogen gradient
+       gradient(:, xat) = gradient(:, xat)-dcosterm*dxk(:)
+       ! strain contribution
+-      sigma(:, :) = sigma + spread(dxk, 1, 3) * spread(dxk, 2, 3) * dcosterm
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            sigma(ic3, jc3) = sigma(ic3, jc3) + dxk(jc3) * dxk(ic3) * dcosterm
++         end do
++      end do
+       ! JK part
+       t13 = 2.0_wp*prefactor/xy
+       ! acceptor
+@@ -399,7 +412,11 @@
+       ! neighbor
+       gradient(:, kat) = gradient(:, kat)+t13*dkj(:)
+       ! strain contribution
+-      sigma(:, :) = sigma - spread(dkj, 1, 3) * spread(dkj, 2, 3) * t13
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            sigma(ic3, jc3) = sigma(ic3, jc3) - dkj(jc3) * dkj(ic3) * t13
++         end do
++      end do
+    end do
+ 
+ end subroutine get_xbond_derivs
+diff -ruN tblite/src/tblite/coulomb/charge/effective.f90 ../../v2tree/subprojects/tblite/src/tblite/coulomb/charge/effective.f90
+--- a/src/tblite/coulomb/charge/effective.f90	2026-09-25 14:46:37
++++ b/src/tblite/coulomb/charge/effective.f90	2026-10-11 20:06:15
+@@ -546,6 +546,7 @@
+    real(wp), intent(out) :: atrace(:, :)
+ 
+    integer :: iat, jat, izp, jzp, ii, jj, ish, jsh
++   integer :: ic3, jc3
+    real(wp) :: vec(3), r1, gam, arg, dtmp, dG(3), dS(3, 3)
+    real(wp), allocatable :: itrace(:, :), didr(:, :, :), didL(:, :, :)
+ 
+@@ -575,7 +576,11 @@
+                dtmp = 1.0_wp / (r1**gexp + gam**(-gexp))
+                dtmp = -r1**(gExp-2.0_wp) * dtmp * dtmp**(1.0_wp/gExp)
+                dG = dtmp*vec
+-               dS = spread(dG, 1, 3) * spread(vec, 2, 3)
++               do jc3 = 1, 3
++                  do ic3 = 1, 3
++                     dS(ic3, jc3) = dG(jc3) * vec(ic3)
++                  end do
++               end do
+                itrace(:, ii+ish) = +dG*qvec(jj+jsh) + itrace(:, ii+ish)
+                itrace(:, jj+jsh) = -dG*qvec(ii+ish) + itrace(:, jj+jsh)
+                didr(:, iat, jj+jsh) = +dG*qvec(ii+ish) + didr(:, iat, jj+jsh)
+@@ -722,6 +727,7 @@
+    real(wp), intent(out) :: ds(3, 3)
+ 
+    integer :: itr
++   integer :: ic3, jc3
+    real(wp) :: vec(3), r1, r2, gtmp, atmp, alp2, fcut, dcut
+ 
+    dg(:) = 0.0_wp
+@@ -741,7 +747,11 @@
+          & + dcut * (gtmp**(1.0_wp/gexp) * r1 - 1.0_wp) / r2
+       atmp = -2*alp*exp(-r2*alp2)/(sqrtpi*r2) + erf(r1*alp)/(r2*r1)
+       dg(:) = dg + (gtmp + atmp) * vec
+-      ds(:, :) = ds + (gtmp + atmp) * spread(vec, 1, 3) * spread(vec, 2, 3)
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            ds(ic3, jc3) = ds(ic3, jc3) + (gtmp + atmp) * vec(jc3) * vec(ic3)
++         end do
++      end do
+    end do
+ 
+ end subroutine get_damat_dir_3d
+@@ -764,6 +774,7 @@
+    real(wp), intent(out) :: ds(3, 3)
+ 
+    integer :: itr
++   integer :: ic3, jc3
+    real(wp) :: fac, vec(3), g2, gv, expk, sink, cosk, alp2, fqp
+    real(wp), parameter :: unity(3, 3) = reshape(&
+       & [1, 0, 0, 0, 1, 0, 0, 0, 1], shape(unity))
+@@ -783,9 +794,13 @@
+       cosk = cos(gv) * expk
+       sink = sin(gv) * expk
+       dg(:) = dg - sink * vec
+-      ds(:, :) = ds + cosk &
+-         & * ((2.0_wp/g2 + 0.5_wp/alp2 + 0.5_wp*fqp) * spread(vec, 1, 3)*spread(vec, 2, 3) &
+-         &     - unity * (1.0_wp + g2*fqp))
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            ds(ic3, jc3) = ds(ic3, jc3) + cosk &
++               & * ((2.0_wp/g2 + 0.5_wp/alp2 + 0.5_wp*fqp) * vec(jc3)*vec(ic3) &
++               &     - unity(ic3, jc3) * (1.0_wp + g2*fqp))
++         end do
++      end do
+    end do
+ 
+ end subroutine get_damat_rec_3d
+diff -ruN tblite/src/tblite/coulomb/charge/gamma.f90 ../../v2tree/subprojects/tblite/src/tblite/coulomb/charge/gamma.f90
+--- a/src/tblite/coulomb/charge/gamma.f90	2026-09-25 14:46:37
++++ b/src/tblite/coulomb/charge/gamma.f90	2026-10-11 20:06:15
+@@ -453,6 +453,7 @@
+    real(wp), intent(out) :: atrace(:, :)
+ 
+    integer :: iat, jat, izp, jzp, ii, jj, ish, jsh
++   integer :: ic3, jc3
+    real(wp) :: vec(3), r1, gam, arg, dtmp, dG(3), dS(3, 3)
+    real(wp), allocatable :: itrace(:, :), didr(:, :, :), didL(:, :, :)
+ 
+@@ -481,7 +482,11 @@
+             do jsh = 1, nshell(jat)
+                gam = dtmp - dexp_gamma(r1, hubbard(ish, izp), hubbard(jsh, jzp))/r1
+                dG = gam*vec
+-               dS = spread(dG, 1, 3) * spread(vec, 2, 3)
++               do jc3 = 1, 3
++                  do ic3 = 1, 3
++                     dS(ic3, jc3) = dG(jc3) * vec(ic3)
++                  end do
++               end do
+                itrace(:, ii+ish) = +dG*qvec(jj+jsh) + itrace(:, ii+ish)
+                itrace(:, jj+jsh) = -dG*qvec(ii+ish) + itrace(:, jj+jsh)
+                didr(:, iat, jj+jsh) = +dG*qvec(ii+ish) + didr(:, iat, jj+jsh)
+@@ -622,6 +627,7 @@
+    real(wp), intent(out) :: ds(3, 3)
+ 
+    integer :: itr
++   integer :: ic3, jc3
+    real(wp) :: vec(3), r1, r2, gtmp, atmp, alp2
+ 
+    dg(:) = 0.0_wp
+@@ -637,7 +643,11 @@
+       gtmp = -1.0_wp/(r2*r1) - dexp_gamma(r1, ui, uj)/r1
+       atmp = -2*alp*exp(-r2*alp2)/(sqrtpi*r2) + erf(r1*alp)/(r2*r1)
+       dg(:) = dg + (gtmp + atmp) * vec
+-      ds(:, :) = ds + (gtmp + atmp) * spread(vec, 1, 3) * spread(vec, 2, 3)
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            ds(ic3, jc3) = ds(ic3, jc3) + (gtmp + atmp) * vec(jc3) * vec(ic3)
++         end do
++      end do
+    end do
+ 
+ end subroutine get_damat_dir_3d
+@@ -658,6 +668,7 @@
+    real(wp), intent(out) :: ds(3, 3)
+ 
+    integer :: itr
++   integer :: ic3, jc3
+    real(wp) :: fac, vec(3), g2, gv, expk, sink, cosk, alp2
+    real(wp), parameter :: unity(3, 3) = reshape(&
+       & [1, 0, 0, 0, 1, 0, 0, 0, 1], shape(unity))
+@@ -676,9 +687,13 @@
+       cosk = cos(gv) * expk
+       sink = sin(gv) * expk
+       dg(:) = dg - sink * vec
+-      ds(:, :) = ds + cosk &
+-         & * ((2.0_wp/g2 + 0.5_wp/alp2) * spread(vec, 1, 3)*spread(vec, 2, 3) &
+-         &     - unity)
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            ds(ic3, jc3) = ds(ic3, jc3) + cosk &
++               & * ((2.0_wp/g2 + 0.5_wp/alp2) * vec(jc3)*vec(ic3) &
++               &     - unity(ic3, jc3))
++         end do
++      end do
+    end do
+ 
+ end subroutine get_damat_rec_3d
+diff -ruN tblite/src/tblite/coulomb/multipole.f90 ../../v2tree/subprojects/tblite/src/tblite/coulomb/multipole.f90
+--- a/src/tblite/coulomb/multipole.f90	2026-09-25 14:46:37
++++ b/src/tblite/coulomb/multipole.f90	2026-10-11 20:06:15
+@@ -499,6 +499,7 @@
+    real(wp), intent(inout) :: amat_sq(:, :, :)
+ 
+    integer :: iat, jat
++   integer :: ic3, jc3
+    real(wp) :: r1, vec(3), g1, g3, g5, fdmp3, fdmp5, tc(6), rr
+ 
+    !$omp parallel do default(none) schedule(runtime) collapse(2) &
+@@ -518,8 +519,12 @@
+          fdmp5 = 1.0_wp / (1.0_wp + 6.0_wp * rr**kdmp5)
+ 
+          amat_sd(:, jat, iat) = amat_sd(:, jat, iat) + vec * g3 * fdmp3
+-         amat_dd(:, jat, :, iat) = amat_dd(:, jat, :, iat) &
+-            & + unity * g3*fdmp5 - spread(vec, 1, 3) * spread(vec, 2, 3) * 3*g5*fdmp5
++         do jc3 = 1, 3
++            do ic3 = 1, 3
++               amat_dd(ic3, jat, jc3, iat) = amat_dd(ic3, jat, jc3, iat) &
++                  & + unity(ic3, jc3) * g3*fdmp5 - vec(jc3) * vec(ic3) * 3*g5*fdmp5
++            end do
++         end do
+          tc(2) = 2*vec(1)*vec(2)*g5*fdmp5
+          tc(4) = 2*vec(1)*vec(3)*g5*fdmp5
+          tc(5) = 2*vec(2)*vec(3)*g5*fdmp5
+@@ -609,6 +614,7 @@
+    real(wp), intent(out) :: amat_sq(:)
+ 
+    integer :: itr
++   integer :: ic3, jc3
+    real(wp) :: fac, vec(3), g2, expk, sink, cosk, gv
+ 
+    amat_sd = 0.0_wp
+@@ -631,7 +637,11 @@
+       cosk = cos(gv)*expk
+ 
+       amat_sd(:) = amat_sd + 2*vec*sink
+-      amat_dd(:, :) = amat_dd + spread(vec, 1, 3) * spread(vec, 2, 3) * cosk
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            amat_dd(ic3, jc3) = amat_dd(ic3, jc3) + vec(jc3) * vec(ic3) * cosk
++         end do
++      end do
+       amat_sq(1) = amat_sq(1) +   vec(1)*vec(1)*cosk
+       amat_sq(2) = amat_sq(2) + 2*vec(1)*vec(2)*cosk
+       amat_sq(3) = amat_sq(3) +   vec(2)*vec(2)*cosk
+@@ -655,6 +665,7 @@
+    real(wp), intent(out) :: amat_sq(:)
+ 
+    integer :: itr
++   integer :: ic3, jc3
+    real(wp) :: vec(3), r1, tmp, fdmp3, fdmp5, g1, g3, g5, arg, arg2, alp2, e1, e2, erft, expt
+ 
+    amat_sd = 0.0_wp
+@@ -681,8 +692,12 @@
+ 
+       tmp = fdmp3 * g3 + e1
+       amat_sd = amat_sd + vec * tmp
+-      amat_dd(:, :) = amat_dd(:, :) + unity * (fdmp5*g3 + e1) &
+-         & - spread(vec, 1, 3) * spread(vec, 2, 3) * (3 * (g5*fdmp5 + e2))
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            amat_dd(ic3, jc3) = amat_dd(ic3, jc3) + unity(ic3, jc3) * (fdmp5*g3 + e1) &
++               & - vec(jc3) * vec(ic3) * (3 * (g5*fdmp5 + e2))
++         end do
++      end do
+       amat_sq(1) = amat_sq(1) +   vec(1)*vec(1)*(g5*fdmp5 + e2) - (fdmp5*g3 + e1)/3.0_wp
+       amat_sq(2) = amat_sq(2) + 2*vec(1)*vec(2)*(g5*fdmp5 + e2)
+       amat_sq(3) = amat_sq(3) +   vec(2)*vec(2)*(g5*fdmp5 + e2) - (fdmp5*g3 + e1)/3.0_wp
+@@ -749,6 +764,7 @@
+    real(wp), contiguous, intent(inout) :: sigma(:, :)
+ 
+    integer :: iat, jat
++   integer :: ic3, jc3
+    real(wp) :: r1, r2, vec(3), rr, fdmp3, fdmp5, g1, g3, g5, g7, dG(3), dS(3, 3)
+    real(wp) :: ddmp3, ddmp5, fddr, eq, edd, dpidpj, dpiv, dpjv, dpiqj, qidpj
+ 
+@@ -777,8 +793,12 @@
+          fddr = 3.0_wp*(dpiqj - qidpj)*kdmp3*fdmp3*g3*(fdmp3/rr)*(rr*g1)**kdmp3
+          dg(:) = - ddmp3*vec * (dpiqj - qidpj) &
+             & + fdmp3*g3*(qat(iat)*dpat(:, jat) - qat(jat)*dpat(:, iat))
+-         ds(:, :) = - 0.5_wp * (spread(vec, 1, 3) * spread(dG, 2, 3) &
+-            & + spread(dG, 1, 3) * spread(vec, 2, 3))
++         do jc3 = 1, 3
++            do ic3 = 1, 3
++               ds(ic3, jc3) = - 0.5_wp * (vec(jc3) * dG(ic3) &
++                  & + dG(jc3) * vec(ic3))
++            end do
++         end do
+ 
+          dEdr(iat) = dEdr(iat) + fddr
+          dEdr(jat) = dEdr(jat) + fddr
+@@ -794,8 +814,12 @@
+          dg(:) = - 2.0_wp*fdmp5*g5*dpidpj*vec &
+             & + 3.0_wp*fdmp5*g5*(dpiv*dpat(:, jat) + dpjv*dpat(:, iat)) &
+             & - edd*ddmp5*g7*vec
+-         ds(:, :) = - 0.5_wp * (spread(vec, 1, 3) * spread(dg, 2, 3) &
+-            & + spread(dg, 1, 3) * spread(vec, 2, 3))
++         do jc3 = 1, 3
++            do ic3 = 1, 3
++               ds(ic3, jc3) = - 0.5_wp * (vec(jc3) * dg(ic3) &
++                  & + dg(jc3) * vec(ic3))
++            end do
++         end do
+ 
+          dEdr(iat) = dEdr(iat) + fddr
+          dEdr(jat) = dEdr(jat) + fddr
+@@ -821,8 +845,12 @@
+             &[vec(1)*qpat(1,iat) + vec(2)*qpat(2,iat) + vec(3)*qpat(4,iat), &
+             & vec(1)*qpat(2,iat) + vec(2)*qpat(3,iat) + vec(3)*qpat(5,iat), &
+             & vec(1)*qpat(4,iat) + vec(2)*qpat(5,iat) + vec(3)*qpat(6,iat)]
+-         ds(:, :) = - 0.5_wp * (spread(vec, 1, 3) * spread(dG, 2, 3) &
+-            & + spread(dG, 1, 3) * spread(vec, 2, 3))
++         do jc3 = 1, 3
++            do ic3 = 1, 3
++               ds(ic3, jc3) = - 0.5_wp * (vec(jc3) * dG(ic3) &
++                  & + dG(jc3) * vec(ic3))
++            end do
++         end do
+ 
+          dEdr(iat) = dEdr(iat) + fddr
+          dEdr(jat) = dEdr(jat) + fddr
+@@ -932,6 +960,7 @@
+    real(wp), intent(out) :: ds(3, 3)
+ 
+    integer :: itr
++   integer :: ic3, jc3
+    real(wp) :: fac, vec(3), g2, gv, expk, alp2, sink, cosk, dpiqj, qidpj
+    real(wp) :: qpiqj, qiqpj, dpiv, dpjv
+ 
+@@ -953,15 +982,23 @@
+       qidpj = dot_product(vec, mj)*qi
+ 
+       dg(:) = dg - 2*vec*cosk * (dpiqj - qidpj)
+-      ds(:, :) = ds + 2 * sink * (dpiqj - qidpj) &
+-         & * ((2.0_wp/g2 + 0.5_wp/alp2) * spread(vec, 1, 3)*spread(vec, 2, 3) - unity)
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            ds(ic3, jc3) = ds(ic3, jc3) + 2 * sink * (dpiqj - qidpj) &
++               & * ((2.0_wp/g2 + 0.5_wp/alp2) * vec(jc3)*vec(ic3) - unity(ic3, jc3))
++         end do
++      end do
+ 
+       dpiv = dot_product(mi, vec)
+       dpjv = dot_product(mj, vec)
+ 
+       dg(:) = dg + vec*sink*dpiv*dpjv
+-      ds(:, :) = ds + cosk * dpiv*dpjv &
+-         & * ((2.0_wp/g2 + 0.5_wp/alp2) * spread(vec, 1, 3)*spread(vec, 2, 3) - unity)
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            ds(ic3, jc3) = ds(ic3, jc3) + cosk * dpiv*dpjv &
++               & * ((2.0_wp/g2 + 0.5_wp/alp2) * vec(jc3)*vec(ic3) - unity(ic3, jc3))
++         end do
++      end do
+ 
+       qiqpj = qi*(tj(1)*vec(1)*vec(1) + tj(3)*vec(2)*vec(2) + tj(6)*vec(3)*vec(3) &
+          & + 2*tj(2)*vec(1)*vec(2) + 2*tj(4)*vec(1)*vec(3) + 2*tj(5)*vec(2)*vec(3))
+@@ -969,8 +1006,12 @@
+          & + 2*ti(2)*vec(1)*vec(2) + 2*ti(4)*vec(1)*vec(3) + 2*ti(5)*vec(2)*vec(3))
+ 
+       dg(:) = dg + vec * sink * (qiqpj + qpiqj)
+-      ds(:, :) = ds + cosk * (qiqpj + qpiqj) &
+-         & * ((2.0_wp/g2 + 0.5_wp/alp2) * spread(vec, 1, 3)*spread(vec, 2, 3) - unity)
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            ds(ic3, jc3) = ds(ic3, jc3) + cosk * (qiqpj + qpiqj) &
++               & * ((2.0_wp/g2 + 0.5_wp/alp2) * vec(jc3)*vec(ic3) - unity(ic3, jc3))
++         end do
++      end do
+    end do
+ 
+ end subroutine get_damat_sdq_rec_3d
+@@ -989,6 +1030,7 @@
+    real(wp), intent(out) :: ds(3, 3)
+ 
+    integer :: itr, k
++   integer :: ic3, jc3
+    real(wp) :: vec(3), r1, r2, g1, g3, g5, g7, fdmp3, fdmp5, ddmp3, ddmp5, dpiqj, qidpj
+    real(wp) :: alp2, arg, arg2, erft, expt, e1, e2, e3, tabc(3, 3, 3), tab(3, 3)
+    real(wp) :: dpidpj, dpiv, dpjv, edd, eq, g_sd(3), g_dd(3), g_sq(3)
+@@ -1054,8 +1096,12 @@
+ 
+       de = de + 3.0_wp*(dpiqj - qidpj)*kdmp3*fdmp3*g3*(fdmp3/rr)*(rr*g1)**kdmp3
+       dg(:) = dg + g_sd
+-      ds(:, :) = - 0.5_wp * (spread(vec, 1, 3) * spread(g_sd, 2, 3) &
+-         & + spread(g_sd, 1, 3) * spread(vec, 2, 3))
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            ds(ic3, jc3) = - 0.5_wp * (vec(jc3) * g_sd(ic3) &
++               & + g_sd(jc3) * vec(ic3))
++         end do
++      end do
+ 
+       ! Dipole - dipole
+       g_dd(:) = - 2.0_wp*fdmp5*g5*dpidpj*vec &
+@@ -1093,8 +1139,12 @@
+ 
+       de = de + 3.0_wp*edd*kdmp5*fdmp5*g5*(fdmp5/rr)*(rr*g1)**kdmp5
+       dg(:) = dg + g_dd
+-      ds(:, :) = - 0.5_wp * (spread(vec, 1, 3) * spread(g_dd, 2, 3) &
+-         & + spread(g_dd, 1, 3) * spread(vec, 2, 3))
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            ds(ic3, jc3) = - 0.5_wp * (vec(jc3) * g_dd(ic3) &
++               & + g_dd(jc3) * vec(ic3))
++         end do
++      end do
+ 
+       ! Charge - quadrupole
+       eq = &
+@@ -1133,8 +1183,12 @@
+ 
+       de = de + eq * 3.0_wp*kdmp5*fdmp5*g5*fdmp5/rr*(rr*g1)**kdmp5
+       dg(:) = dg + g_sq
+-      ds(:, :) = ds - 0.5_wp * (spread(vec, 1, 3) * spread(g_sq, 2, 3) &
+-         & + spread(g_sq, 1, 3) * spread(vec, 2, 3))
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            ds(ic3, jc3) = ds(ic3, jc3) - 0.5_wp * (vec(jc3) * g_sq(ic3) &
++               & + g_sq(jc3) * vec(ic3))
++         end do
++      end do
+    end do
+ 
+ end subroutine get_damat_sdq_dir_3d
+diff -ruN tblite/src/tblite/ncoord/type.f90 ../../v2tree/subprojects/tblite/src/tblite/ncoord/type.f90
+--- a/src/tblite/ncoord/type.f90	2026-09-25 14:46:37
++++ b/src/tblite/ncoord/type.f90	2026-10-11 20:06:15
+@@ -205,6 +205,7 @@
+       real(wp), intent(out) :: dcndL(:, :, :)
+ 
+       integer :: iat, jat, izp, jzp, itr
++      integer :: ic3, jc3
+       real(wp) :: r2, r1, rij(3), countf, countd(3), sigma(3, 3), cutoff2
+ 
+       cn(:) = 0.0_wp
+@@ -240,7 +241,11 @@
+                dcndr(:, iat, jat) = dcndr(:, iat, jat) + countd * self%directed_factor
+                dcndr(:, jat, iat) = dcndr(:, jat, iat) - countd
+ 
+-               sigma = spread(countd, 1, 3) * spread(rij, 2, 3)
++               do jc3 = 1, 3
++                  do ic3 = 1, 3
++                     sigma(ic3, jc3) = countd(jc3) * rij(ic3)
++                  end do
++               end do
+ 
+                dcndL(:, :, iat) = dcndL(:, :, iat) + sigma
+                if (iat /= jat) then
+diff -ruN tblite/src/tblite/repulsion/effective.f90 ../../v2tree/subprojects/tblite/src/tblite/repulsion/effective.f90
+--- a/src/tblite/repulsion/effective.f90	2026-09-25 14:46:37
++++ b/src/tblite/repulsion/effective.f90	2026-10-11 20:06:15
+@@ -208,6 +208,7 @@
+    real(wp), intent(inout) :: sigma(:, :)
+ 
+    integer :: iat, jat, izp, jzp, itr
++   integer :: ic3, jc3
+    real(wp) :: r1, r2, rij(3), r1k, r1r, exa, cutoff2, dE, dG(3), dS(3, 3)
+ 
+    cutoff2 = cutoff**2
+@@ -230,7 +231,11 @@
+             r1r = r1**rexp(jzp, izp)
+             dE = zeff(jzp, izp) * exa/r1r
+             dG = -(alpha(jzp, izp)*r1k*kexp(jzp, izp) + rexp(jzp, izp)) * dE * rij/r2
+-            dS = spread(dG, 1, 3) * spread(rij, 2, 3)
++            do jc3 = 1, 3
++               do ic3 = 1, 3
++                  dS(ic3, jc3) = dG(jc3) * rij(ic3)
++               end do
++            end do
+             energies(iat) = energies(iat) + 0.5_wp * dE
+             if (iat /= jat) then
+                energies(jat) = energies(jat) + 0.5_wp * dE
+diff -ruN tblite/src/tblite/scf/diag.f90 ../../v2tree/subprojects/tblite/src/tblite/scf/diag.f90
+--- a/src/tblite/scf/diag.f90	2026-09-25 14:46:37
++++ b/src/tblite/scf/diag.f90	2026-10-02 13:06:28
+@@ -34,6 +34,7 @@
+       procedure(solve_dp), deferred :: solve_dp
+       procedure :: get_density
+       procedure :: get_wdensity
++      procedure :: build_density
+       procedure :: delete
+    end type diag_solver_type
+ 
+@@ -92,8 +93,9 @@
+       end do
+ 
+       focc(:, 1) = focc(:, 1) + focc(:, 2)
+-      call get_density_matrix(focc(:, 1), hmat(:, :, 1), density(:, :, 1))
++      call self%build_density(focc(:, 1), hmat(:, :, 1), density(:, :, 1), error)
+       focc(:, 1) = focc(:, 1) - focc(:, 2)
++      if (allocated(error)) return
+    case(2)
+       hmat(:, :, :) = 2*hmat
+       do spin = 1, 2
+@@ -102,7 +104,8 @@
+ 
+          call get_fermi_filling(self%nel(spin), self%kt, eval(:, spin), &
+             & homo, focc(:, spin), e_fermi)
+-         call get_density_matrix(focc(:, spin), hmat(:, :, spin), density(:, :, spin))
++         call self%build_density(focc(:, spin), hmat(:, :, spin), density(:, :, spin), error)
++         if (allocated(error)) return
+       end do
+    end select
+ end subroutine get_density
+@@ -141,6 +144,17 @@
+       focc(:, 1) = focc(:, 1) - focc(:, 2)
+    end if
+ end subroutine get_wdensity
++
++!> Overridable ordinary-density multiplication; weighted density stays on the CPU helper.
++subroutine build_density(self, focc, coeff, pmat, error)
++   class(diag_solver_type), intent(inout) :: self
++   real(wp), contiguous, intent(in) :: focc(:)
++   real(wp), contiguous, intent(in) :: coeff(:, :)
++   real(wp), contiguous, intent(out) :: pmat(:, :)
++   type(error_type), allocatable, intent(out) :: error
++
++   call get_density_matrix(focc, coeff, pmat)
++end subroutine build_density
+ 
+ !> Get the density matrix from the coefficients and occupation numbers
+ subroutine get_density_matrix(focc, coeff, pmat)
+@@ -173,4 +187,4 @@
+    ! No specific resources to free in this base class
+ end subroutine delete
+ 
+-end module tblite_scf_diag
+\ No newline at end of file
++end module tblite_scf_diag
+diff -ruN tblite/src/tblite/scf/iterator.f90 ../../v2tree/subprojects/tblite/src/tblite/scf/iterator.f90
+--- a/src/tblite/scf/iterator.f90	2026-09-25 14:46:37
++++ b/src/tblite/scf/iterator.f90	2026-10-02 13:06:28
+@@ -308,6 +308,7 @@
+    integer :: spin
+ 
+    call solver%get_density(wfn%coeff, ints%overlap, wfn%emo, wfn%focc, wfn%density, error)
++   if (allocated(error)) return
+    do spin = 1, 2
+       call get_electronic_entropy(wfn%focc(:, spin), wfn%kt, stmp(spin))
+    end do
+diff -ruN tblite/src/tblite/solvation/alpb.f90 ../../v2tree/subprojects/tblite/src/tblite/solvation/alpb.f90
+--- a/src/tblite/solvation/alpb.f90	2026-09-25 14:46:37
++++ b/src/tblite/solvation/alpb.f90	2026-10-11 20:06:15
+@@ -691,6 +691,7 @@
+    real(wp), intent(out) :: aDet
+ 
+    integer :: iat
++   integer :: ic3, jc3
+    real(wp) :: r2, rad2, rad3, vol, vec(3), center(3), inertia(3, 3)
+    real(wp), parameter :: tof = 2.0_wp/5.0_wp, unity(3, 3) = reshape(&
+       & [1.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 1.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 1.0_wp], &
+@@ -712,8 +713,12 @@
+       rad3 = rad2 * rad(iat)
+       vec(:) = xyz(:, iat) - center
+       r2 = sum(vec**2)
+-      inertia(:, :) = inertia + rad3 * ((r2 + tof*rad2) * unity &
+-         & - spread(vec, 1, 3) * spread(vec, 2, 3))
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            inertia(ic3, jc3) = inertia(ic3, jc3) + rad3 * ((r2 + tof*rad2) * unity(ic3, jc3) &
++               & - vec(jc3) * vec(ic3))
++         end do
++      end do
+    end do
+ 
+    aDet = sqrt(matdet_3x3(inertia)**(1.0_wp/3.0_wp)/(tof*vol))
+@@ -734,6 +739,7 @@
+    real(wp), intent(inout) :: gradient(:, :)
+ 
+    integer :: iat
++   integer :: ic3, jc3
+    real(wp) :: r2, rad2, rad3, vol, vec(3), center(3), inertia(3, 3), aDet
+    real(wp) :: aDeriv(3, 3), qtotal
+    real(wp), parameter :: tof = 2.0_wp/5.0_wp, unity(3, 3) = reshape(&
+@@ -758,8 +764,12 @@
+       rad3 = rad2 * rad(iat)
+       vec(:) = xyz(:, iat) - center
+       r2 = sum(vec**2)
+-      inertia(:, :) = inertia + rad3 * ((r2 + tof*rad2) * unity &
+-         & - spread(vec, 1, 3) * spread(vec, 2, 3))
++      do jc3 = 1, 3
++         do ic3 = 1, 3
++            inertia(ic3, jc3) = inertia(ic3, jc3) + rad3 * ((r2 + tof*rad2) * unity(ic3, jc3) &
++               & - vec(jc3) * vec(ic3))
++         end do
++      end do
+    end do
+    aDet = sqrt(matdet_3x3(inertia)**(1.0_wp/3.0_wp)/(tof*vol))
+ 
+diff -ruN tblite/src/tblite/xtb/h0.f90 ../../v2tree/subprojects/tblite/src/tblite/xtb/h0.f90
+--- a/src/tblite/xtb/h0.f90	2026-09-25 14:46:37
++++ b/src/tblite/xtb/h0.f90	2026-10-11 20:06:15
+@@ -361,6 +361,7 @@
+    real(wp), intent(inout) :: sigma(:, :)
+ 
+    integer :: iat, jat, izp, jzp, itr, img, inl, spin, nspin
++   integer :: ic3, jc3
+    integer :: ish, jsh, is, js, ii, jj, iao, jao, nao, ij
+    real(wp) :: rr, r2, vec(3), hij, dG(3), hscale, hs
+    real(wp) :: shpolyi, shpolyj, shpoly, dshpoly, dsv(3)
+@@ -449,8 +450,12 @@
+                dEdcn(jat) = dEdcn(jat) + dcnj
+                gradient(:, iat) = gradient(:, iat) + dG
+                gradient(:, jat) = gradient(:, jat) - dG
+-               sigma(:, :) = sigma + 0.5_wp * (spread(vec, 1, 3) * spread(dG, 2, 3) &
+-                  + spread(dG, 1, 3) * spread(vec, 2, 3))
++               do jc3 = 1, 3
++                  do ic3 = 1, 3
++                     sigma(ic3, jc3) = sigma(ic3, jc3) + 0.5_wp * (vec(jc3) * dG(ic3) &
++                        + dG(jc3) * vec(ic3))
++                  end do
++               end do
+ 
+             end do
+          end do

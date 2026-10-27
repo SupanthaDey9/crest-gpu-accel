@@ -1,0 +1,7 @@
+build/
+bin/
+crest-tests/
+crest-*/
+__pycache__/
+*.log
+slurm-*.out

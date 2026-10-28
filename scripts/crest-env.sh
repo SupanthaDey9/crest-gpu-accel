@@ -1,4 +1,4 @@
-# crest-env.sh: runtime settings for the accelerated CREST build. Source it before running crest:
+# crest-env.sh: runtime settings for the FastCREST build. Source it before running crest:
 #   source scripts/crest-env.sh            # tuned threads only (no GPU switches)
 #   source scripts/crest-env.sh gpu        # also switch on the GPU three-body term and the CPU solver for optimizations
 #

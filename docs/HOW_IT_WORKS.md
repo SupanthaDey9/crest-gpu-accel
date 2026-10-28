@@ -1,6 +1,6 @@
 # How it works
 
-The patches change four things in CREST commit cfdc301f (master branch). Everything else is upstream code.
+FastCREST's patches change four things in CREST commit cfdc301f (master branch). Everything else is upstream code.
 
 ## 1. Thread layout and host code (always on)
 
@@ -28,6 +28,8 @@ For every optimization pass of at least `min_structures` structures, the CREST p
 1. **Write the pass.** It writes the exact binary coordinates into a pass folder. The folder is named by a hash of the settings, the binary's sha256 and the input, so a requeued driver finds and reuses finished chunks.
 2. **Submit workers.** It submits chunks of `chunk` structures as one Slurm array (`slurm/dist_worker.sbatch`, `--export=NONE`). Each worker runs the same binary, refuses mismatched settings, and writes an atomic result file with a checksum, its binary hash and its CPU model.
 3. **Check and merge.** It recomputes `verify` structures from workers on its own CPU model, which must agree bitwise, and `verify_other` from other CPU models, which must agree to 1e-7 Eh and 1e-4 Å. It then merges the results in input order through the in-process code path. A same-model mismatch sends the whole pass back in-process; an other-model failure recomputes those chunks.
+
+Defaults below are the code's; `slurm/crest_search.sbatch` writes `chunk = 64`, `worker_threads = 16`, `throttle = 60` and `min_structures = 128`.
 
 | `dist_oloop.conf` key | meaning | default |
 |---|---|---|
@@ -58,5 +60,5 @@ The benchmark searches used `worker_threads = 16`, `chunk = 64`, `throttle = 60`
   - `crest.restart` records the position with an atomic write.
 - **Resume.** Set `restart = true` in the TOML input and keep the same `CREST_CKPT` value.
 - **After the MTD loop.** The stage after the loop restarts from its beginning when `CREST_RESUME_POST=fallback`; with the default `refuse`, it stops with exit code 3.
-- **Reproducibility.** With nested threads, a resumed trajectory is statistically equivalent to an uninterrupted one, not bitwise identical. Two uninterrupted multithreaded runs also differ.
+- **Reproducibility.** With nested threads, a resumed trajectory is expected to be statistically equivalent to an uninterrupted one (not tested directly), not bitwise identical. Two uninterrupted multithreaded runs also differ.
 - **Known defect.** A resume late in the MTD loop (from the fourth MTD batch on) can stop with "File crest_rotamers_3.xyz is empty".

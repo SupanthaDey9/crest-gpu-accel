@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_tests.sh: check an accelerated CREST build.
+# run_tests.sh: check a FastCREST build.
 #
 #   tests/run_tests.sh bin/crest                         # CPU and GPU single points + a short GPU search
 #   tests/run_tests.sh bin/crest --reference /path/crest # also compare the CPU single point with a reference build

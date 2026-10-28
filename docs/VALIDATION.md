@@ -4,7 +4,7 @@ All tests ran on the ISU Nova cluster. The code-level tests and the replicate se
 
 | Name | What it is |
 |---|---|
-| release | CREST 3.0.2 release (conda-forge), the reference |
+| release | CREST 3.0.2 release (conda-forge), used by the conventional search |
 | unmodified | our build of CREST commit cfdc301f without these patches, run from the command line |
 | unmodified, TOML | the same build, run from TOML input |
 | FastCREST, CPU | FastCREST with every GPU switch off |
@@ -21,7 +21,7 @@ Every configuration made the same decisions before the first trajectory:
 
 ## Single points: 306 structures
 
-The structures are the reference's 135 final conformers, 50 of its MD frames and 121 others.
+The structures are the conventional search's 135 final conformers, 50 of its MD frames and 121 others.
 
 | Comparison | max abs dE (Eh) | max abs dG (Eh/bohr) |
 |---|---|---|
@@ -51,13 +51,13 @@ Every comparison is equivalent. Three intervals after optimization exclude zero 
 
 **Endpoint.** The lowest crude-level energy after the first MTD round.
 
-**Groups.** 16 GPU searches against 17 searches with unmodified numerics.
+**Groups.** 16 FastCREST searches against 17 stock searches (unmodified numerics, including the FastCREST binary with its GPU code off).
 
 **Result.**
 
 - **Shift:** the Hodges-Lehmann shift was +4.09 kcal/mol, with an exact 95% interval of -4.94 to +11.75.
-- **Verdict:** no detectable shift.
-- **Limit:** equivalence within 2 kcal/mol could not be shown. Stock CREST alone spreads over about 13 kcal/mol (interquartile range) on this system, and its final energies over 125 kcal/mol between runs from the same input.
+- **Verdict:** inconclusive; no detectable shift.
+- **Limit:** equivalence within 2 kcal/mol could not be shown. Stock searches alone spread over about 13 kcal/mol (interquartile range) on this system. Thirteen of the 15 finished stock searches ended between -1.1 and +24.1 kcal/mol relative to the conventional search; two CPU-mode runs of the FastCREST binary ended more than 110 kcal/mol higher, for reasons not yet traced.
 
 ## Check of the released build
 

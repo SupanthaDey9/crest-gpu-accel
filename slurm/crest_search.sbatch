@@ -1,10 +1,10 @@
 #!/bin/bash -l
-# crest_search.sbatch: one accelerated iMTD-GC search as a Slurm job (driver with one GPU + distributed CPU workers).
+# crest_search.sbatch: one FastCREST iMTD-GC search as a Slurm job (driver with one GPU + distributed CPU workers).
 #
 #   sbatch [your partition/account options] slurm/crest_search.sbatch molecule.xyz CHARGE UHF [extra crest options]
 #
 # Environment (export before sbatch, or edit the defaults below):
-#   CREST_BIN            accelerated crest binary (default: <repo>/bin/crest)
+#   CREST_BIN            FastCREST crest binary (default: <repo>/bin/crest)
 #   OUT                  search folder (default: $PWD/crest-<jobid>); resubmit with the same OUT to resume a folder
 #   WORKER_SBATCH_ARGS   sbatch options for worker jobs, e.g. "--partition=cpu --account=me --mem=8G --time=02:00:00".
 #                        Empty: no distribution, every optimization pass runs inside this job. Quote any '|' inside.

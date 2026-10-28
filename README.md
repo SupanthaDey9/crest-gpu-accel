@@ -18,7 +18,7 @@ FastCREST is CREST commit cfdc301f (master branch, 80 commits after v3.0.2) plus
 | 274-atom Ga peptide, `--quick`, ALPB water | wall time | throughput (E/G calls per hour, relative) | CPU-hours | GPU-hours |
 |---|---|---|---|---|
 | conventional search: CREST 3.0.2 release, 32 threads | 321.5 h | 1.0x | 10,288 (32 threads x wall) | 0 |
-| FastCREST, 1 A100 + CPU workers | 54.25 h | 8.1x | 8,936 | 54 |
+| FastCREST, 1 A100 + CPU workers | 54.3 h | 8.1x | 8,936 | 54.3 |
 
 The two searches did different amounts of work (adaptive restarts), so compare the throughput column. Each speed number in this README is a single measurement (n = 1) on ISU Nova, documented in the paper [reference to be added]; `docs/VALIDATION.md` covers correctness.
 
@@ -123,7 +123,7 @@ The MTD step is still mostly host work: in a profile of an earlier build with on
 | Hardware | time per step | three-body term |
 |---|---|---|
 | conventional search (CREST 3.0.2 release), 32 threads | 2.8 s | CPU |
-| CPU only, zen5, 64 threads | 0.74 s | CPU |
+| CPU only, Zen 5, 64 threads | 0.74 s | CPU |
 | A100 + EPYC 7543 | 0.49 s | GPU |
 | H200 | 0.39 s | GPU |
 | RTX PRO 6000 + EPYC 9645 | 0.68 s | falls back to CPU (no sm_120 code) |
@@ -140,8 +140,8 @@ See `docs/VALIDATION.md`. In short:
 - **Startup:** the decisions CREST makes before the first trajectory are identical across the 3.0.2 release, an unmodified build of cfdc301f, and FastCREST.
 - **Single points:** energies and gradients on 306 structures agree with the release binary to 1.01e-10 Eh. The CPU route of FastCREST is bitwise identical to the unmodified build; the GPU route agrees with it to 4e-13 Eh.
 - **Controlled MD:** from identical starts and velocities, the fraction of topology changes is equivalent within a preset margin of ±0.15 (two one-sided tests, 90% intervals).
-- **Replicate searches:** 16 FastCREST searches and 17 searches with unmodified numerics, all from the same input. The shift in the lowest energy after the first MTD round was +4.09 kcal/mol, with a 95% interval of −4.94 to +11.75 kcal/mol, so no shift was detected. Equivalence within 2 kcal/mol could not be shown, because CREST itself varies far more than that between runs on this system (interquartile range about 13 kcal/mol).
-- **Structures:** all ten finished FastCREST searches end with the same Ga binding site as the conventional search, and the lowest FastCREST conformer lies 0.7 kcal/mol above the conventional one.
+- **Replicate searches:** 16 FastCREST searches and 17 stock searches (unmodified numerics), all from the same input. The shift in the lowest energy after the first MTD round was +4.09 kcal/mol, with a 95% interval of −4.94 to +11.75 kcal/mol, so no shift was detected. The test is inconclusive: equivalence within 2 kcal/mol could not be shown, because CREST itself varies far more than that between runs on this system (interquartile range about 13 kcal/mol).
+- **Structures:** FastCREST and stock searches end in similar compact conformers at similar final energies. Outside the Ga site, which CREST's topology check holds fixed, both differ from the conventional search mainly at the peptide termini. The lowest FastCREST conformer lies 0.7 kcal/mol above the conventional one.
 - **The released code:** built from GitHub with `build.sh`, it gives a single-thread single point byte-identical to the binary validated above.
 
 ## Known limitations

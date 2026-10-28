@@ -72,8 +72,9 @@ if [[ -f crest.restart ]] && ! grep -q '^restart *= *true' search.toml; then
   sed -i '1i restart = true' search.toml
 fi
 
-if [[ -n ${WORKER_SBATCH_ARGS:-} ]]; then
-  [[ -f dist_oloop.conf ]] || cat > dist_oloop.conf <<EOF
+# The first submission with WORKER_SBATCH_ARGS writes dist_oloop.conf; a resubmission uses the existing file.
+if [[ -n ${WORKER_SBATCH_ARGS:-} && ! -f dist_oloop.conf ]]; then
+  cat > dist_oloop.conf <<EOF
 workdir = $OUT/dist_passes
 worker_script = $REPO/slurm/dist_worker.sbatch
 worker_env = $WORKER_ENV
@@ -91,8 +92,8 @@ lost_wait = 90
 submit = 1
 max_rounds = 10
 EOF
-  export CREST_DIST_OLOOP=$OUT/dist_oloop.conf
 fi
+[[ -f dist_oloop.conf ]] && export CREST_DIST_OLOOP=$OUT/dist_oloop.conf
 
 source "$REPO/scripts/crest-env.sh" gpu
 export OMP_NUM_THREADS=$T CREST_CKPT=40 CREST_RESUME_POST=fallback

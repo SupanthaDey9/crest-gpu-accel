@@ -13,11 +13,11 @@ This build gives each kind its own hardware:
 - **Optimisation passes:** Slurm array jobs on ordinary CPU nodes. The driver re-checks a sample of the results before merging them.
 - **Checkpoints:** written during trajectories and passes, so a search survives preemption and time limits.
 
-The build is CREST main at commit cfdc301f plus the patches in `patches/`. With every switch below unset, it gives the same results as an unmodified build of that commit: single-thread energies and gradients are bitwise identical, because the rewritten loops in the patches keep the operand order.
+The build is CREST commit cfdc301f (master branch, 80 commits after v3.0.2) plus the patches in `patches/`. With every switch below unset, it gives the same results as an unmodified build of that commit: single-thread energies and gradients are bitwise identical, because the rewritten loops in the patches keep the operand order.
 
-| 274-atom Ga peptide, `--quick`, ALPB water | wall time | throughput (E/G calls per hour) | CPU-hours | GPU-hours |
+| 274-atom Ga peptide, `--quick`, ALPB water | wall time | throughput (E/G calls per hour, relative) | CPU-hours | GPU-hours |
 |---|---|---|---|---|
-| CREST 3.0.2 release, 32 threads | 321.5 h | 1.0x | 10,288 | 0 |
+| CREST 3.0.2 release, 32 threads | 321.5 h | 1.0x | 10,288 (32 threads x wall) | 0 |
 | this build, 1 A100 + CPU workers | 54.25 h | 8.1x | 8,936 | 54 |
 
 The two searches did different amounts of work (adaptive restarts), so compare the throughput column. Each speed number in this README is a single measurement (n = 1) on ISU Nova, documented in the paper [reference to be added]; `docs/VALIDATION.md` covers correctness.
@@ -81,8 +81,8 @@ To resume after an interruption, add `restart = true` as the first line of `sear
 
 This is the mode behind the numbers above.
 
-1. Edit `slurm/worker_env.sh` so that workers load the same OpenBLAS and CUDA modules as the build. `slurm/site/nova_worker_env.sh` is a complete example; to use a site file instead, `export WORKER_ENV=/absolute/path/to/site_env.sh` before `sbatch`. Workers are started with `--export=NONE`.
-2. Load the same modules in your shell, then submit the driver:
+1. Uncomment and edit the module line in `slurm/worker_env.sh` so that workers load the same compiler runtime, OpenBLAS and CUDA modules as the build. `slurm/site/nova_worker_env.sh` is a complete example; to use a site file instead, `export WORKER_ENV=/absolute/path/to/site_env.sh` before `sbatch`. Workers are started with `--export=NONE`.
+2. Make sure that the output folder, this repository and `bin/crest` are on a filesystem that the CPU worker nodes also mount, and that jobs may run `sbatch`, `squeue` and `scancel`. Load the same modules in your shell, then submit the driver:
 
 ```bash
 export WORKER_SBATCH_ARGS="--partition=<cpu partition> --account=<account> --mem=8G --time=02:00:00"
@@ -91,7 +91,9 @@ sbatch --partition=<gpu partition> --account=<account> slurm/crest_search.sbatch
 
 **What the driver does.** The driver job takes one GPU and 32 cores. For every optimisation pass of 128 or more structures it submits worker arrays of 16-core tasks, with 64 structures each and at most 60 at once. The settings are in `OUT/dist_oloop.conf`; the keys are explained in `docs/HOW_IT_WORKS.md`. Quote any `|` inside `WORKER_SBATCH_ARGS`.
 
-**Resuming.** Resubmitting with `OUT=<folder>` resumes a search. `search.toml` and `dist_oloop.conf` are written only the first time; edit them in the folder to change settings.
+**Resuming.** Resubmitting with `OUT=<folder>` resumes a search. `search.toml` and `dist_oloop.conf` are written only the first time, and an existing `dist_oloop.conf` is used again; edit them in the folder to change settings, or rename `dist_oloop.conf` to run every pass inside the driver.
+
+**Finding the repository.** The job finds this repository from its own command line. If that fails it stops and asks for `REPO=/path/to/crest-gpu-accel`. `CREST_BIN`, `SOLVENT` and `EXTRA_TOML` are described at the top of `slurm/crest_search.sbatch`. `tests/site/nova/` holds the Nova jobs behind `docs/VALIDATION.md`.
 
 **Time limits.** Give the driver the time the whole search needs. The stage after the MTD loop can only restart from its beginning, so short segments may never finish it.
 
@@ -116,16 +118,16 @@ sbatch --partition=<gpu partition> --account=<account> slurm/crest_search.sbatch
 
 ## Which GPU
 
-The MTD step is still mostly host work: about two thirds of each step ran on the CPU in our profile. A fast host CPU therefore matters as much as the GPU. MTD time per step for the 274-atom test system:
+The MTD step is still mostly host work: in a profile of an earlier build with only the eigensolve on the GPU, 63.5% of each step was CPU time. A fast host CPU therefore matters as much as the GPU. MTD time per step for the 274-atom test system (GPU rows at 32 threads unless stated):
 
 | Hardware | time per step | three-body term |
 |---|---|---|
 | original release, 32 threads | 2.8 s | CPU |
 | CPU only, zen5, 64 threads | 0.74 s | CPU |
-| A100 + EPYC 7543 | 0.46 s | GPU |
+| A100 + EPYC 7543 | 0.49 s | GPU |
 | H200 | 0.39 s | GPU |
 | RTX PRO 6000 + EPYC 9645 | 0.68 s | falls back to CPU (no sm_120 code) |
-| V100 + older Xeon, 8 threads | 1.86 s | falls back to CPU (no sm_70 code) |
+| V100 + older Xeon, 8 threads | 1.86 s (one partial trajectory) | falls back to CPU (no sm_70 code) |
 
 **Architectures.** The three-body kernel is compiled for sm_80 and sm_90. L40S (sm_89) runs the sm_80 code; we saw it run on one L40S job. To add targets, pass the full list, defaults included, for example `./build.sh --gencode "-gencode;arch=compute_80,code=sm_80;-gencode;arch=compute_90,code=sm_90;-gencode;arch=compute_120,code=sm_120"`. sm_120 needs CUDA 12.8 or newer; the tested CUDA 12.4.1 cannot compile it. Such builds have not been validated, and the value is kept in the CMake cache until you delete `build/`.
 
@@ -144,12 +146,15 @@ See `docs/VALIDATION.md`. In short:
 ## Known limitations
 
 - **One test system:** all measurements come from one system (a 274-atom, +4 Ga peptide) with `--quick`.
-- **Late-resume failure:** a resume late in the MTD loop (later cycles) can fail with "File crest_rotamers_3.xyz is empty". Give jobs enough time that late preemptions are rare.
+- **Late-resume failure:** a resume late in the MTD loop (from the fourth MTD batch on) can fail with "File crest_rotamers_3.xyz is empty". Give jobs enough time that late preemptions are rare.
 - **Open-shell metals:** for open-shell Cu and Ni peptides at these settings, most MTDs stopped early. The same happened for Fe with the release build.
 - **Untested combinations:** the full benchmark searches used the Slurm mode. The single-machine mode was tested on small molecules only.
+- **CPU-only use:** the build always includes the GPU code, so a CUDA toolkit is needed to build and run it. For a CPU-only search leave out `tblite_solver` and source `scripts/crest-env.sh` without `gpu`; `slurm/crest_search.sbatch` always asks for a GPU.
+- **Compiler flags:** do not add `-march=native` or other flags that allow FMA contraction. The bitwise identity with the unmodified build relies on the default x86-64 target that `build.sh` uses.
+- **Test input:** the repository ships only a 12-atom smoke molecule. The Ga peptide input and the raw outputs are available from the authors on request.
 
 ## License and citation
 
 - **CREST, tblite, dftd4, simple-dftd3:** these projects are LGPL-3.0-or-later, and the patches to them, the new CUDA, C++ and Fortran sources and the scripts are distributed under the same license (`COPYING`, `COPYING.LESSER`).
 - **mctc-lib, multicharge:** these projects are Apache-2.0, and the patches to them (`patches/deps/mctc-lib.patch`, `patches/deps/multicharge.patch`) are offered under Apache-2.0 (`LICENSE-Apache-2.0`).
-- **Citation:** please cite the CREST and GFN2-xTB papers and our paper [reference to be added].
+- **Citation:** please cite the papers that CREST asks for, P. Pracht, F. Bohle, S. Grimme, *Phys. Chem. Chem. Phys.* **22**, 7169 (2020); S. Grimme, *J. Chem. Theory Comput.* **15**, 2847 (2019); and P. Pracht et al., *J. Chem. Phys.* **160**, 114110 (2024). Cite also GFN2-xTB, C. Bannwarth, S. Ehlert, S. Grimme, *J. Chem. Theory Comput.* **15**, 1652 (2019), and our paper [reference to be added].

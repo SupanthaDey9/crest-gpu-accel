@@ -17,6 +17,7 @@
 #   5 dist      the same search with CREST_DIST_OLOOP (optimisation passes as Slurm array jobs)
 set -uo pipefail
 
+[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,17p' "$0"; exit 0; }
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CREST=$(realpath "${1:?usage: run_tests.sh CREST [options]}") || exit 64; shift
 REF=''; DIST=''; WENV=$HERE/../slurm/worker_env.sh; GPU=1; MOL=$HERE/../examples/smoke/struc.xyz; CHRG=0; UHF=0; WORK=$PWD/crest-tests; T=4

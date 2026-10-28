@@ -4322,7 +4322,8 @@ diff -ruN a/src/calculator/calculator.F90 b/src/calculator/calculator.F90
 diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/crest_cuda_bridge.cpp
 --- a/src/calculator/cuda/crest_cuda_bridge.cpp
 +++ b/src/calculator/cuda/crest_cuda_bridge.cpp
-@@ -0,0 +1,693 @@
+@@ -0,0 +1,694 @@
++// SPDX-License-Identifier: LGPL-3.0-or-later
 +#include "crest_cuda_bridge.h"
 +
 +#include <cuda_runtime_api.h>
@@ -5019,7 +5020,8 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 diff -ruN a/src/calculator/cuda/crest_cuda_bridge.h b/src/calculator/cuda/crest_cuda_bridge.h
 --- a/src/calculator/cuda/crest_cuda_bridge.h
 +++ b/src/calculator/cuda/crest_cuda_bridge.h
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,222 @@
++// SPDX-License-Identifier: LGPL-3.0-or-later
 +#ifndef CREST_CUDA_BRIDGE_H
 +#define CREST_CUDA_BRIDGE_H
 +

@@ -1,6 +1,6 @@
 # How it works
 
-The patches change four things in CREST main at commit cfdc301f. Everything else is upstream code.
+The patches change four things in CREST commit cfdc301f (master branch). Everything else is upstream code.
 
 ## 1. Thread layout and host code (always on)
 
@@ -12,13 +12,13 @@ The patches change four things in CREST main at commit cfdc301f. Everything else
   - one OpenBLAS thread.
 
   The default schedule (dynamic, chunk 1) had hidden almost all thread scaling of the SCC. On one EPYC 7502 node, MTD became 2.18x faster per energy and gradient with the same binary.
-- **Rewritten loops.** 43 places in tblite, mctc-lib, multicharge, dftd4 and simple-dftd3 built 3x3 outer products with Fortran `spread`. That allocates temporaries in inner loops, so they are now explicit loops with the same operand order. A single-thread energy and gradient became 11% faster, and stays bitwise identical.
+- **Rewritten loops.** 43 statements in tblite, mctc-lib, multicharge, dftd4 and simple-dftd3 built 3x3 outer products with Fortran `spread`. That allocates temporaries in inner loops, so they are now explicit loops with the same operand order. A single-thread energy and gradient became 11% faster, and stays bitwise identical.
 
 ## 2. One GPU for the trajectories (`tblite_solver = "cuda"`, `CREST_ATM_GPU=1`)
 
-- **SCC eigensolve.** During MTD and MD, each SCC eigensolve goes through a small C++ bridge (`src/calculator/cuda/crest_cuda_bridge.cpp`) to cuSOLVER `dsygvd`; cuBLAS builds the density matrix. Every OpenMP worker has its own CUDA stream and buffers, so the six MTD solves overlap on one device.
-- **Three-body term.** The D4 Axilrod-Teller-Muto dispersion term runs in a deterministic FP64 kernel (`src/cuda_atm/`). It has a fixed reduction order and no atomics, and is compiled with `--fmad=false`. It matches the CPU routine to 4.4e-18 Eh/bohr.
-- **CPU fallback.** Any CUDA error switches the process back to the CPU routine.
+- **SCC eigensolve.** During MTD and MD, each SCC eigensolve goes through a small C++ bridge (added by `patches/0001-crest-cfdc301f.patch` as `src/calculator/cuda/crest_cuda_bridge.cpp`) to cuSOLVER `dsygvd`; cuBLAS builds the density matrix. Every OpenMP worker has its own CUDA stream and buffers, so the six MTD solves overlap on one device.
+- **Three-body term.** The D4 Axilrod-Teller-Muto dispersion term runs in a deterministic FP64 kernel (`src/cuda_atm/`, also added by that patch). It has a fixed reduction order and no atomics, and is compiled with `--fmad=false`. It matches the CPU routine to 4.4e-18 Eh/bohr.
+- **CPU fallback.** A CUDA error in the three-body kernel moves that term to the CPU routine for the rest of the run. A CUDA error in the eigensolve stops the calculation, for example on a GPU with an uncorrectable ECC error.
 - **Optimisation passes stay on the CPU.** `CREST_OPT_SOLVER=cpu` keeps the CPU solver, and the ATM phase switch in `crest_oloop` keeps the CPU dispersion. The GPU was slower there, and CPU results can be checked bit for bit.
 
 ## 3. Distributed optimisation passes (`CREST_DIST_OLOOP=<config>`)

@@ -30,7 +30,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Pinned upstream revisions. CREST main at cfdc301f is v3.0.2 plus 80 commits; its submodules are pinned by the
+# Pinned upstream revisions. CREST commit cfdc301f (master) is v3.0.2 plus 80 commits; its submodules are pinned by the
 # CREST commit itself. The five FetchContent dependencies are pinned to the commits our validated build used.
 CREST_URL=https://github.com/crest-lab/crest.git
 CREST_REV=cfdc301f759686b0fd66ced63b5ddbd6c693fa4f

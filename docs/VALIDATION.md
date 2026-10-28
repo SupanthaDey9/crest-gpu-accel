@@ -1,11 +1,11 @@
 # Validation record
 
-All tests ran on the ISU Nova cluster. The code-level tests and the replicate searches used the 274-atom, +4 Ga peptide in ALPB water; `tests/run_tests.sh` uses the 12-atom smoke molecule. The pass criteria were fixed before the runs. Five configurations were compared:
+All tests ran on the ISU Nova cluster. The code-level tests and the replicate searches used the 274-atom, +4 Ga peptide in ALPB water; `tests/run_tests.sh` uses the 12-atom smoke molecule. The pass criteria of the code-level tests were fixed before the runs; the rule for the replicate searches was fixed before any group summary, after some single-run values had been seen. Five configurations were compared:
 
 | Name | What it is |
 |---|---|
 | release | CREST 3.0.2 release (conda-forge), the reference |
-| unmodified | our build of CREST main at cfdc301f without these patches, run from the command line |
+| unmodified | our build of CREST commit cfdc301f without these patches, run from the command line |
 | unmodified, TOML | the same build, run from TOML input |
 | this build, CPU | this build with every GPU switch off |
 | this build, GPU | this build with `tblite_solver = "cuda"` and `CREST_ATM_GPU=1` |
@@ -39,10 +39,13 @@ Each comparison used 20 ps runs from four starts, at 400 and 500 K, with identic
 |---|---|---|
 | unmodified, same binary twice | -0.024 to +0.017 | -0.084 to +0.041 |
 | unmodified vs release | -0.015 to +0.017 | -0.039 to +0.030 |
+| unmodified: TOML vs command line | -0.005 to +0.034 | -0.030 to +0.110 |
+| this build, CPU vs unmodified (TOML) | -0.043 to +0.005 | -0.137 to -0.007 |
 | this build: GPU vs CPU | -0.000 to +0.050 | +0.008 to +0.134 |
+| this build, GPU vs unmodified (command line) | -0.001 to +0.030 | +0.005 to +0.072 |
 | this build, GPU vs release | -0.003 to +0.033 | -0.014 to +0.082 |
 
-Every comparison is equivalent.
+Every comparison is equivalent. Three intervals after optimisation exclude zero while staying inside the margin; one of them compares two CPU configurations whose single-thread forces are bitwise identical, so we read them as sampling noise.
 
 ## Replicate searches
 

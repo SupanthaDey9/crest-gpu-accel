@@ -1,0 +1,62 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below, and also cite the CREST papers listed under references."
+title: "crest-gpu-accel: faster CREST conformer searches with one GPU and distributed optimisation passes"
+version: 1.0.0
+date-released: 2026-10-28
+license: LGPL-3.0-or-later
+repository-code: "https://github.com/SupanthaDey9/crest-gpu-accel"
+authors:
+  - family-names: Dey
+    given-names: Supantha
+    affiliation: Iowa State University
+  - family-names: Kariyawasam
+    given-names: Nilusha
+    affiliation: Iowa State University
+  - family-names: Chowdhury
+    given-names: Ratul
+    affiliation: Iowa State University
+references:
+  - type: article
+    title: "Automated exploration of the low-energy chemical space with fast quantum chemical methods"
+    authors:
+      - family-names: Pracht
+        given-names: Philipp
+      - family-names: Bohle
+        given-names: Fabian
+      - family-names: Grimme
+        given-names: Stefan
+    journal: "Physical Chemistry Chemical Physics"
+    volume: 22
+    start: 7169
+    end: 7192
+    year: 2020
+    doi: 10.1039/C9CP06869D
+  - type: article
+    title: "Exploration of chemical compound, conformer, and reaction space with meta-dynamics simulations based on tight-binding quantum chemical calculations"
+    authors:
+      - family-names: Grimme
+        given-names: Stefan
+    journal: "Journal of Chemical Theory and Computation"
+    volume: 15
+    start: 2847
+    end: 2862
+    year: 2019
+    doi: 10.1021/acs.jctc.9b00143
+  - type: article
+    title: "CREST—A program for the exploration of low-energy molecular chemical space"
+    authors:
+      - family-names: Pracht
+        given-names: Philipp
+      - name: "et al."
+    journal: "The Journal of Chemical Physics"
+    volume: 160
+    start: 114110
+    year: 2024
+    doi: 10.1063/5.0197592
+  - type: software
+    title: "CREST: Conformer-Rotamer Ensemble Sampling Tool"
+    authors:
+      - name: "CREST developers"
+    repository-code: "https://github.com/crest-lab/crest"
+    commit: cfdc301f759686b0fd66ced63b5ddbd6c693fa4f
+    license: LGPL-3.0-or-later

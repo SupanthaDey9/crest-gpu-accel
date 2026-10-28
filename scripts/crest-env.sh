@@ -1,6 +1,6 @@
 # crest-env.sh: runtime settings for the accelerated CREST build. Source it before running crest:
 #   source scripts/crest-env.sh            # tuned threads only (no GPU switches)
-#   source scripts/crest-env.sh gpu        # also switch on the GPU three-body term and the CPU solver for optimisations
+#   source scripts/crest-env.sh gpu        # also switch on the GPU three-body term and the CPU solver for optimizations
 #
 # The thread settings do not change the arithmetic of a single-threaded run; with more threads, results differ from run
 # to run only through reduction order, as for any multithreaded CREST run. In gpu mode, CREST_ATM_GPU=1 swaps in the GPU
@@ -22,10 +22,10 @@ export MKL_NUM_THREADS=1
 ulimit -s unlimited 2>/dev/null || true
 
 if [[ ${1:-} == gpu ]]; then
-  # D4 three-body (ATM) term on the GPU during MTD and MD; optimisation passes always use the CPU routine.
+  # D4 three-body (ATM) term on the GPU during MTD and MD; optimization passes always use the CPU routine.
   export CREST_ATM_GPU=1
   # The CUDA eigensolver is selected per calculation level with tblite_solver = "cuda" in the TOML input. This keeps
-  # every optimisation pass on the CPU solver: faster there (32 concurrent optimisations ran at 0.87-0.89x on one GPU)
+  # every optimization pass on the CPU solver: faster there (32 concurrent optimizations ran at 0.87-0.89x on one GPU)
   # and checkable bit for bit against distributed workers.
   export CREST_OPT_SOLVER=cpu
 fi

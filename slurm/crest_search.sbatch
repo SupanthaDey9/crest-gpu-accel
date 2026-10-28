@@ -7,7 +7,7 @@
 #   CREST_BIN            accelerated crest binary (default: <repo>/bin/crest)
 #   OUT                  search folder (default: $PWD/crest-<jobid>); resubmit with the same OUT to resume a folder
 #   WORKER_SBATCH_ARGS   sbatch options for worker jobs, e.g. "--partition=cpu --account=me --mem=8G --time=02:00:00".
-#                        Empty: no distribution, every optimisation pass runs inside this job. Quote any '|' inside.
+#                        Empty: no distribution, every optimization pass runs inside this job. Quote any '|' inside.
 #   WORKER_ENV           worker environment file (default: <repo>/slurm/worker_env.sh; edit it for your site)
 #   SOLVENT              ALPB solvent (default: water; "none" for gas phase)
 #   EXTRA_TOML           extra lines for the [[calculation.level]] block
@@ -16,7 +16,7 @@
 # search.toml and dist_oloop.conf are written on the first run only; edit them in OUT to change a running search.
 # Load the compiler runtime, OpenBLAS and CUDA modules the binary was built with before calling sbatch (or below).
 #
-# Time limit: give the job the time the whole search needs. The stage after the MTD loop (MD stage + its optimisation
+# Time limit: give the job the time the whole search needs. The stage after the MTD loop (MD stage + its optimization
 # pass) can only restart from its beginning, so short self-requeuing segments may never finish it.
 #SBATCH --job-name=crest-gpu
 #SBATCH --nodes=1
@@ -35,7 +35,7 @@ if [[ -z ${REPO:-} ]]; then
   cmd=$(scontrol show job "${SLURM_JOB_ID:?}" | sed -n 's/^ *Command=//p' | head -1)
   REPO=$(cd "$(dirname "${cmd%% *}")/.." 2>/dev/null && pwd) || REPO=''
 fi
-[[ -f ${REPO:-/nonexistent}/scripts/crest-env.sh ]] || { echo "cannot find the repository (set REPO=/path/to/crest-gpu-accel)" >&2; exit 2; }
+[[ -f ${REPO:-/nonexistent}/scripts/crest-env.sh ]] || { echo "cannot find the repository (set REPO=/path/to/FastCREST)" >&2; exit 2; }
 MOL=$(realpath "${1:?usage: crest_search.sbatch molecule.xyz CHARGE UHF [crest options]}"); CHRG=${2:?charge}; UHF=${3:?uhf}; shift 3
 REPO=$(cd "$REPO" && pwd)
 CREST_BIN=$(realpath -m "${CREST_BIN:-$REPO/bin/crest}")

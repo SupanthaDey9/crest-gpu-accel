@@ -7,14 +7,14 @@ All tests ran on the ISU Nova cluster. The code-level tests and the replicate se
 | release | CREST 3.0.2 release (conda-forge), the reference |
 | unmodified | our build of CREST commit cfdc301f without these patches, run from the command line |
 | unmodified, TOML | the same build, run from TOML input |
-| this build, CPU | this build with every GPU switch off |
-| this build, GPU | this build with `tblite_solver = "cuda"` and `CREST_ATM_GPU=1` |
+| FastCREST, CPU | FastCREST with every GPU switch off |
+| FastCREST, GPU | FastCREST with `tblite_solver = "cuda"` and `CREST_ATM_GPU=1` |
 
 ## Startup decisions
 
 Every configuration made the same decisions before the first trajectory:
 
-- the same initial-optimisation energies to 1e-10 Eh (first frame -415.2625315087 Eh on the release, -415.2625315088 Eh on the others);
+- the same initial-optimization energies to 1e-10 Eh (first frame -415.2625315087 Eh on the release, -415.2625315088 Eh on the others);
 - the same flexibility measure (0.391);
 - six MTDs of 250 ps;
 - 274 bonds with bond order > 0.5 and 272 SHAKE constraints (counts compared).
@@ -27,25 +27,25 @@ The structures are the reference's 135 final conformers, 50 of its MD frames and
 |---|---|---|
 | unmodified vs release | 1.01e-10 | 8.16e-11 |
 | unmodified: TOML vs command line | 0 (bitwise) | 0 |
-| this build, CPU vs unmodified | 0 (bitwise) | 0 |
-| this build: GPU vs CPU | 3.98e-13 | 4.0e-15 |
-| this build, GPU vs release | 1.01e-10 | 8.16e-11 |
+| FastCREST, CPU vs unmodified | 0 (bitwise) | 0 |
+| FastCREST: GPU vs CPU | 3.98e-13 | 4.0e-15 |
+| FastCREST, GPU vs release | 1.01e-10 | 8.16e-11 |
 
 ## Controlled MD
 
 Each comparison used 20 ps runs from four starts, at 400 and 500 K, with identical initial velocities on both sides. The score is the fraction of frames whose bonding topology changed. A pair counts as equivalent if the 90% confidence interval of the mean paired difference lies within ±0.15 (two one-sided tests).
 
-| Comparison | raw frames | after optimisation |
+| Comparison | raw frames | after optimization |
 |---|---|---|
 | unmodified, same binary twice | -0.024 to +0.017 | -0.084 to +0.041 |
 | unmodified vs release | -0.015 to +0.017 | -0.039 to +0.030 |
 | unmodified: TOML vs command line | -0.005 to +0.034 | -0.030 to +0.110 |
-| this build, CPU vs unmodified (TOML) | -0.043 to +0.005 | -0.137 to -0.007 |
-| this build: GPU vs CPU | -0.000 to +0.050 | +0.008 to +0.134 |
-| this build, GPU vs unmodified (command line) | -0.001 to +0.030 | +0.005 to +0.072 |
-| this build, GPU vs release | -0.003 to +0.033 | -0.014 to +0.082 |
+| FastCREST, CPU vs unmodified (TOML) | -0.043 to +0.005 | -0.137 to -0.007 |
+| FastCREST: GPU vs CPU | -0.000 to +0.050 | +0.008 to +0.134 |
+| FastCREST, GPU vs unmodified (command line) | -0.001 to +0.030 | +0.005 to +0.072 |
+| FastCREST, GPU vs release | -0.003 to +0.033 | -0.014 to +0.082 |
 
-Every comparison is equivalent. Three intervals after optimisation exclude zero while staying inside the margin; one of them compares two CPU configurations whose single-thread forces are bitwise identical, so we read them as sampling noise.
+Every comparison is equivalent. Three intervals after optimization exclude zero while staying inside the margin; one of them compares two CPU configurations whose single-thread forces are bitwise identical, so we read them as sampling noise.
 
 ## Replicate searches
 
@@ -75,6 +75,6 @@ Every comparison is equivalent. Three intervals after optimisation exclude zero 
 | Binary | sha256 0d9a8311... A fresh build is not expected to be byte-identical to the benchmarked binary (different build paths and link order), so the single point below compares results instead |
 | Single point vs benchmarked binary | Ga peptide, `-T 1`, CPU solver: `crest.engrad` byte-identical to the benchmarked binary (sha256 of the file 39765069...; E = -415.262561312859191 Eh) |
 | `run_tests.sh`, A100 80GB PCIe node | 1 CPU single point: pass. 2 against the benchmarked binary: bitwise identical. 3 GPU single point vs CPU: max abs dE 8.9e-15 Eh, max abs dG 1.0e-15 Eh/bohr, three-body kernel ran on the GPU (1 call, 0 fallbacks). 4 short GPU search: normal termination |
-| Distributed passes (`--dist`, GPU driver, CPU workers on a CPU partition) | a short search in which 635 structures were optimised by Slurm worker jobs on other nodes, checked by the driver and merged; normal termination in 252 s |
+| Distributed passes (`--dist`, GPU driver, CPU workers on a CPU partition) | a short search in which 635 structures were optimized by Slurm worker jobs on other nodes, checked by the driver and merged; normal termination in 252 s |
 
 The same checks passed on 2026-10-26 and 2026-10-27 for earlier revisions of the patches, which differed only in source comments and two CMake message strings.

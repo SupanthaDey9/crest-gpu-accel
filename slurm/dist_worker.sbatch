@@ -1,5 +1,5 @@
 #!/bin/bash -l
-# dist_worker.sbatch: one Slurm array task = one chunk of one distributed optimisation pass (CREST_DIST_OLOOP).
+# dist_worker.sbatch: one Slurm array task = one chunk of one distributed optimization pass (CREST_DIST_OLOOP).
 # The CREST driver submits it itself:
 #   sbatch --parsable --export=NONE --job-name=cdo_<tag> --array=<chunks>%<throttle> --cpus-per-task=<TW> \
 #          --output=<pass>/logs/w_%A_%a.out <sbatch_args of the config> dist_worker.sbatch <pass dir>

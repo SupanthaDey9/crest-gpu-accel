@@ -19,11 +19,11 @@ The patches change four things in CREST commit cfdc301f (master branch). Everyth
 - **SCC eigensolve.** During MTD and MD, each SCC eigensolve goes through a small C++ bridge (added by `patches/0001-crest-cfdc301f.patch` as `src/calculator/cuda/crest_cuda_bridge.cpp`) to cuSOLVER `dsygvd`; cuBLAS builds the density matrix. Every OpenMP worker has its own CUDA stream and buffers, so the six MTD solves overlap on one device.
 - **Three-body term.** The D4 Axilrod-Teller-Muto dispersion term runs in a deterministic FP64 kernel (`src/cuda_atm/`, also added by that patch). It has a fixed reduction order and no atomics, and is compiled with `--fmad=false`. It matches the CPU routine to 4.4e-18 Eh/bohr.
 - **CPU fallback.** A CUDA error in the three-body kernel moves that term to the CPU routine for the rest of the run. A CUDA error in the eigensolve stops the calculation, for example on a GPU with an uncorrectable ECC error.
-- **Optimisation passes stay on the CPU.** `CREST_OPT_SOLVER=cpu` keeps the CPU solver, and the ATM phase switch in `crest_oloop` keeps the CPU dispersion. The GPU was slower there, and CPU results can be checked bit for bit.
+- **Optimization passes stay on the CPU.** `CREST_OPT_SOLVER=cpu` keeps the CPU solver, and the ATM phase switch in `crest_oloop` keeps the CPU dispersion. The GPU was slower there, and CPU results can be checked bit for bit.
 
-## 3. Distributed optimisation passes (`CREST_DIST_OLOOP=<config>`)
+## 3. Distributed optimization passes (`CREST_DIST_OLOOP=<config>`)
 
-For every optimisation pass of at least `min_structures` structures, the CREST process acts as a driver:
+For every optimization pass of at least `min_structures` structures, the CREST process acts as a driver:
 
 1. **Write the pass.** It writes the exact binary coordinates into a pass folder. The folder is named by a hash of the settings, the binary's sha256 and the input, so a requeued driver finds and reuses finished chunks.
 2. **Submit workers.** It submits chunks of `chunk` structures as one Slurm array (`slurm/dist_worker.sbatch`, `--export=NONE`). Each worker runs the same binary, refuses mismatched settings, and writes an atomic result file with a checksum, its binary hash and its CPU model.
@@ -54,7 +54,7 @@ The benchmark searches used `worker_threads = 16`, `chunk = 64`, `throttle = 60`
 
 - **What is saved:**
   - every N steps, each trajectory writes an exact binary checkpoint (coordinates, velocities, counters, bias list, SHAKE list, SCC charges);
-  - every optimised structure is journalled;
+  - every optimized structure is journaled;
   - `crest.restart` records the position with an atomic write.
 - **Resume.** Set `restart = true` in the TOML input and keep the same `CREST_CKPT` value.
 - **After the MTD loop.** The stage after the loop restarts from its beginning when `CREST_RESUME_POST=fallback`; with the default `refuse`, it stops with exit code 3.

@@ -1,24 +1,24 @@
-# crest-gpu-accel
+# FastCREST
 
-Faster [CREST](https://github.com/crest-lab/crest) conformer searches (iMTD-GC, GFN2-xTB) with one GPU and many CPU jobs, computing the same thing as CREST.
+Faster [CREST](https://github.com/crest-lab/crest) conformer searches (iMTD-GC, GFN2-xTB) with one GPU and many CPU jobs, computing the same thing as CREST. FastCREST was first released as crest-gpu-accel.
 
 A CREST search spends its time on two different kinds of work:
 
 - **Trajectories.** A few long metadynamics and MD trajectories, each waiting on one energy-and-gradient call per step.
-- **Optimisations.** About 15,000 independent geometry optimisations per iteration.
+- **Optimizations.** About 15,000 independent geometry optimizations per iteration.
 
-This build gives each kind its own hardware:
+FastCREST gives each kind its own hardware:
 
 - **Trajectories:** one GPU (the SCC eigensolve and the D4 three-body dispersion term), plus a tuned OpenMP layout.
-- **Optimisation passes:** Slurm array jobs on ordinary CPU nodes. The driver re-checks a sample of the results before merging them.
+- **Optimization passes:** Slurm array jobs on ordinary CPU nodes. The driver re-checks a sample of the results before merging them.
 - **Checkpoints:** written during trajectories and passes, so a search survives preemption and time limits.
 
-The build is CREST commit cfdc301f (master branch, 80 commits after v3.0.2) plus the patches in `patches/`. With every switch below unset, it gives the same results as an unmodified build of that commit: single-thread energies and gradients are bitwise identical, because the rewritten loops in the patches keep the operand order.
+FastCREST is CREST commit cfdc301f (master branch, 80 commits after v3.0.2) plus the patches in `patches/`. With every switch below unset, it gives the same results as an unmodified build of that commit: single-thread energies and gradients are bitwise identical, because the rewritten loops in the patches keep the operand order.
 
 | 274-atom Ga peptide, `--quick`, ALPB water | wall time | throughput (E/G calls per hour, relative) | CPU-hours | GPU-hours |
 |---|---|---|---|---|
-| CREST 3.0.2 release, 32 threads | 321.5 h | 1.0x | 10,288 (32 threads x wall) | 0 |
-| this build, 1 A100 + CPU workers | 54.25 h | 8.1x | 8,936 | 54 |
+| conventional search: CREST 3.0.2 release, 32 threads | 321.5 h | 1.0x | 10,288 (32 threads x wall) | 0 |
+| FastCREST, 1 A100 + CPU workers | 54.25 h | 8.1x | 8,936 | 54 |
 
 The two searches did different amounts of work (adaptive restarts), so compare the throughput column. Each speed number in this README is a single measurement (n = 1) on ISU Nova, documented in the paper [reference to be added]; `docs/VALIDATION.md` covers correctness.
 
@@ -39,7 +39,7 @@ The two searches did different amounts of work (adaptive restarts), so compare t
 
 ```bash
 module load gcc cmake ninja openblas cuda     # or your site's equivalents
-git clone https://github.com/SupanthaDey9/crest-gpu-accel.git && cd crest-gpu-accel
+git clone https://github.com/chowdhurylab/FastCREST.git && cd FastCREST
 ./build.sh --jobs 8                           # fetches CREST cfdc301f and pinned dependencies, patches, builds bin/crest
 tests/run_tests.sh bin/crest                  # on a GPU node: single points (CPU, GPU) and a short GPU search
 ```
@@ -53,10 +53,10 @@ tests/run_tests.sh bin/crest                  # on a GPU node: single points (CP
 
 ## Run on one machine with a GPU (no Slurm)
 
-All optimisations run in-process; the trajectories use the GPU. Run in a folder of its own, because CREST writes many files.
+All optimizations run in-process; the trajectories use the GPU. Run in a folder of its own, because CREST writes many files.
 
 ```bash
-R=/path/to/crest-gpu-accel
+R=/path/to/FastCREST
 mkdir run && cd run && cp /path/to/your_molecule.xyz molecule.xyz
 source $R/scripts/crest-env.sh gpu                         # thread layout + GPU switches
 export OMP_NUM_THREADS=32 CREST_CKPT=40 CREST_RESUME_POST=fallback   # use the number of physical cores
@@ -77,7 +77,7 @@ $R/bin/crest --input search.toml --newversion --gfn2 --chrg 0 --uhf 0 --alpb wat
 
 To resume after an interruption, add `restart = true` as the first line of `search.toml` and start the same command again with the same `CREST_CKPT`. `crest.err` ends with a line `CREST_ATM_GPU summary gpu_calls N ...`; N > 0 means the three-body term ran on the GPU.
 
-## Run on a Slurm cluster with distributed optimisation passes
+## Run on a Slurm cluster with distributed optimization passes
 
 This is the mode behind the numbers above.
 
@@ -89,11 +89,11 @@ export WORKER_SBATCH_ARGS="--partition=<cpu partition> --account=<account> --mem
 sbatch --partition=<gpu partition> --account=<account> slurm/crest_search.sbatch molecule.xyz 0 0 --quick
 ```
 
-**What the driver does.** The driver job takes one GPU and 32 cores. For every optimisation pass of 128 or more structures it submits worker arrays of 16-core tasks, with 64 structures each and at most 60 at once. The settings are in `OUT/dist_oloop.conf`; the keys are explained in `docs/HOW_IT_WORKS.md`. Quote any `|` inside `WORKER_SBATCH_ARGS`.
+**What the driver does.** The driver job takes one GPU and 32 cores. For every optimization pass of 128 or more structures it submits worker arrays of 16-core tasks, with 64 structures each and at most 60 at once. The settings are in `OUT/dist_oloop.conf`; the keys are explained in `docs/HOW_IT_WORKS.md`. Quote any `|` inside `WORKER_SBATCH_ARGS`.
 
 **Resuming.** Resubmitting with `OUT=<folder>` resumes a search. `search.toml` and `dist_oloop.conf` are written only the first time, and an existing `dist_oloop.conf` is used again; edit them in the folder to change settings, or rename `dist_oloop.conf` to run every pass inside the driver.
 
-**Finding the repository.** The job finds this repository from its own command line. If that fails it stops and asks for `REPO=/path/to/crest-gpu-accel`. `CREST_BIN`, `SOLVENT` and `EXTRA_TOML` are described at the top of `slurm/crest_search.sbatch`. `tests/site/nova/` holds the Nova jobs behind `docs/VALIDATION.md`.
+**Finding the repository.** The job finds this repository from its own command line. If that fails it stops and asks for `REPO=/path/to/FastCREST`. `CREST_BIN`, `SOLVENT` and `EXTRA_TOML` are described at the top of `slurm/crest_search.sbatch`. `tests/site/nova/` holds the Nova jobs behind `docs/VALIDATION.md`.
 
 **Time limits.** Give the driver the time the whole search needs. The stage after the MTD loop can only restart from its beginning, so short segments may never finish it.
 
@@ -104,11 +104,11 @@ sbatch --partition=<gpu partition> --account=<account> slurm/crest_search.sbatch
 | Setting | Where | Effect |
 |---|---|---|
 | `tblite_solver = "cuda"` | `[[calculation.level]]` in the TOML input | SCC eigensolve on the GPU (cuSOLVER `dsygvd`) |
-| `CREST_OPT_SOLVER=cpu` | environment | keep every optimisation pass on the CPU solver. Always set it together with the line above: on one GPU, 32 concurrent optimisations ran slower than on the CPU, and only CPU passes can be distributed and checked bit for bit |
-| `CREST_ATM_GPU=1` | environment | D4 three-body dispersion term on the GPU, in every calculation except optimisation passes |
-| `CREST_CKPT=40` | environment | exact checkpoint of every trajectory every 40 steps, and a journal of every optimised structure |
+| `CREST_OPT_SOLVER=cpu` | environment | keep every optimization pass on the CPU solver. Always set it together with the line above: on one GPU, 32 concurrent optimizations ran slower than on the CPU, and only CPU passes can be distributed and checked bit for bit |
+| `CREST_ATM_GPU=1` | environment | D4 three-body dispersion term on the GPU, in every calculation except optimization passes |
+| `CREST_CKPT=40` | environment | exact checkpoint of every trajectory every 40 steps, and a journal of every optimized structure |
 | `CREST_RESUME_POST=fallback` | environment | a resume after the MTD loop rewinds to the start of that stage instead of stopping with exit code 3 |
-| `CREST_DIST_OLOOP=<file>` | environment | distribute optimisation passes as Slurm arrays (file format in `docs/HOW_IT_WORKS.md`) |
+| `CREST_DIST_OLOOP=<file>` | environment | distribute optimization passes as Slurm arrays (file format in `docs/HOW_IT_WORKS.md`) |
 | `CREST_CUDA_MULTI_DEVICE=1` | environment | spread GPU sessions over several visible GPUs. Not recommended: two GPUs gave only 1.19x for one search, so run two searches instead |
 | `OMP_*`, `OPENBLAS_NUM_THREADS=1`, ... | `scripts/crest-env.sh` | thread layout. Keep OpenBLAS at one thread; otherwise it floods the output with "Detect OpenMP Loop" warnings |
 
@@ -122,7 +122,7 @@ The MTD step is still mostly host work: in a profile of an earlier build with on
 
 | Hardware | time per step | three-body term |
 |---|---|---|
-| original release, 32 threads | 2.8 s | CPU |
+| conventional search (CREST 3.0.2 release), 32 threads | 2.8 s | CPU |
 | CPU only, zen5, 64 threads | 0.74 s | CPU |
 | A100 + EPYC 7543 | 0.49 s | GPU |
 | H200 | 0.39 s | GPU |
@@ -137,11 +137,12 @@ The MTD step is still mostly host work: in a profile of an earlier build with on
 
 See `docs/VALIDATION.md`. In short:
 
-- **Startup:** the decisions CREST makes before the first trajectory are identical across the 3.0.2 release, an unmodified build of cfdc301f, and this build.
-- **Single points:** energies and gradients on 306 structures agree with the release binary to 1.01e-10 Eh. The CPU route of this build is bitwise identical to the unmodified build; the GPU route agrees with it to 4e-13 Eh.
+- **Startup:** the decisions CREST makes before the first trajectory are identical across the 3.0.2 release, an unmodified build of cfdc301f, and FastCREST.
+- **Single points:** energies and gradients on 306 structures agree with the release binary to 1.01e-10 Eh. The CPU route of FastCREST is bitwise identical to the unmodified build; the GPU route agrees with it to 4e-13 Eh.
 - **Controlled MD:** from identical starts and velocities, the fraction of topology changes is equivalent within a preset margin of ±0.15 (two one-sided tests, 90% intervals).
-- **Replicate searches:** 16 GPU searches and 17 searches with unmodified numerics, all from the same input. The shift in the lowest energy after the first MTD round was +4.09 kcal/mol, with a 95% interval of −4.94 to +11.75 kcal/mol, so no shift was detected. Equivalence within 2 kcal/mol could not be shown, because CREST itself varies far more than that between runs on this system (interquartile range about 13 kcal/mol).
-- **The release build:** built from GitHub with `build.sh`, it gives a single-thread single point byte-identical to the binary validated above.
+- **Replicate searches:** 16 FastCREST searches and 17 searches with unmodified numerics, all from the same input. The shift in the lowest energy after the first MTD round was +4.09 kcal/mol, with a 95% interval of −4.94 to +11.75 kcal/mol, so no shift was detected. Equivalence within 2 kcal/mol could not be shown, because CREST itself varies far more than that between runs on this system (interquartile range about 13 kcal/mol).
+- **Structures:** all ten finished FastCREST searches end with the same Ga binding site as the conventional search, and the lowest FastCREST conformer lies 0.7 kcal/mol above the conventional one.
+- **The released code:** built from GitHub with `build.sh`, it gives a single-thread single point byte-identical to the binary validated above.
 
 ## Known limitations
 

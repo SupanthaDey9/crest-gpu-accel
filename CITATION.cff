@@ -1,10 +1,10 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below, and also cite the CREST papers listed under references."
-title: "crest-gpu-accel: faster CREST conformer searches with one GPU and distributed optimisation passes"
-version: 1.0.0
+title: "FastCREST: faster CREST conformer searches with one GPU and distributed optimization passes"
+version: 1.0.1
 date-released: 2026-10-28
 license: LGPL-3.0-or-later
-repository-code: "https://github.com/SupanthaDey9/crest-gpu-accel"
+repository-code: "https://github.com/chowdhurylab/FastCREST"
 authors:
   - family-names: Dey
     given-names: Supantha

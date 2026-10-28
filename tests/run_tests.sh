@@ -14,7 +14,7 @@
 #   2 sp_ref    the same with --reference: must agree to 1e-8 Eh, 1e-6 Eh/bohr (bitwise for the same CREST commit)
 #   3 sp_gpu    single point with tblite_solver = "cuda" and CREST_ATM_GPU=1: must match test 1 to 1e-8 Eh, 1e-6 Eh/bohr
 #   4 search    --quick iMTD-GC search on one machine with the GPU route and checkpoints: must end normally
-#   5 dist      the same search with CREST_DIST_OLOOP (optimisation passes as Slurm array jobs)
+#   5 dist      the same search with CREST_DIST_OLOOP (optimization passes as Slurm array jobs)
 set -uo pipefail
 
 [[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,17p' "$0"; exit 0; }
@@ -136,7 +136,7 @@ EOF
     if search dist "CREST_DIST_OLOOP=$WORK/dist_oloop.conf" && grep -q 'CREST_DIST>' "$WORK/dist/crest.out" "$WORK/dist/crest.err"; then
       nw=$(grep -h 'all .* chunks done' "$WORK/dist/crest.out" | sed -n 's/.*same CPU model) \([0-9]*\), workers (other CPU model) \([0-9]*\).*/\1 \2/p' | awk '{s+=$1+$2} END {print s+0}')
       if [[ $nw -gt 0 ]]; then
-        ok "5 dist: normal termination in $(( $(date +%s) - t0 )) s; $nw structures optimised by Slurm workers and merged"
+        ok "5 dist: normal termination in $(( $(date +%s) - t0 )) s; $nw structures optimized by Slurm workers and merged"
       else
         bad "5 dist: the search finished but no structure came from a worker"
       fi

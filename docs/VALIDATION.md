@@ -66,15 +66,15 @@ Every comparison is equivalent. Three intervals after optimisation exclude zero 
 - **Same numbers as the benchmarked binary:** a single-thread single point of the Ga peptide must give a `crest.engrad` byte-identical to the one from the binary that produced every result above.
 - **Repeatable checks:** `tests/run_tests.sh` repeats the single-point checks (CPU against a reference binary, GPU against CPU) and runs a short GPU search, optionally with distributed passes.
 
-### Results on ISU Nova (2026-10-27)
+### Results on ISU Nova (2026-10-28, fresh clone of this repository from GitHub, commit d6c51ab)
 
 | Item | Value |
 |---|---|
-| Patches tested (sha256 prefix) | `0001-crest` eac356b2, `0002-tblite` a4ae8643, dftd4 08ac3376, mctc-lib dedf3bb8, multicharge 5ea75735, s-dftd3 b3387586 |
-| Build | `build.sh` of this repository with sources fetched from GitHub, gfortran 11.5.0, CMake 3.30.2, CUDA 12.4.1, OpenBLAS 0.3.27; 291 s on 8 cores |
-| Binary | sha256 e2164e80... A fresh build is not expected to be byte-identical to the benchmarked binary (different build paths and link order), so the single point below compares results instead |
+| Patches tested (sha256 prefix) | `0001-crest` 3d0d8ca6, `0002-tblite` a4ae8643, dftd4 08ac3376, mctc-lib dedf3bb8, multicharge 5ea75735, s-dftd3 b3387586 |
+| Build | `build.sh` with sources fetched from GitHub, gfortran 11.5.0, CMake 3.30.2, CUDA 12.4.1, OpenBLAS 0.3.27; 414 s on 8 cores of a Xeon Platinum 8260 node (earlier builds of the same patches took 291 and 322 s) |
+| Binary | sha256 0d9a8311... A fresh build is not expected to be byte-identical to the benchmarked binary (different build paths and link order), so the single point below compares results instead |
 | Single point vs benchmarked binary | Ga peptide, `-T 1`, CPU solver: `crest.engrad` byte-identical to the benchmarked binary (sha256 of the file 39765069...; E = -415.262561312859191 Eh) |
-| `run_tests.sh`, A100 node | 1 CPU single point: pass. 2 against the benchmarked binary: bitwise identical. 3 GPU single point vs CPU: max abs dE 8.9e-15 Eh, max abs dG 1.0e-15 Eh/bohr, three-body kernel ran on the GPU (1 call, 0 fallbacks). 4 short GPU search: normal termination |
-| Distributed passes (`--dist`, GPU driver, CPU workers on a CPU partition) | a short search in which 620 structures were optimised by Slurm worker jobs on other nodes, checked by the driver and merged; normal termination in 251 s |
+| `run_tests.sh`, A100 80GB PCIe node | 1 CPU single point: pass. 2 against the benchmarked binary: bitwise identical. 3 GPU single point vs CPU: max abs dE 8.9e-15 Eh, max abs dG 1.0e-15 Eh/bohr, three-body kernel ran on the GPU (1 call, 0 fallbacks). 4 short GPU search: normal termination |
+| Distributed passes (`--dist`, GPU driver, CPU workers on a CPU partition) | a short search in which 635 structures were optimised by Slurm worker jobs on other nodes, checked by the driver and merged; normal termination in 252 s |
 
-The same checks passed on 2026-10-26 for the previous revision of the patches, which differed only in source comments and two CMake message strings.
+The same checks passed on 2026-10-26 and 2026-10-27 for earlier revisions of the patches, which differed only in source comments and two CMake message strings.

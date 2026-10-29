@@ -57,7 +57,7 @@ Every comparison is equivalent. Three intervals after optimization exclude zero 
 
 - **Shift:** the Hodges-Lehmann shift was +4.09 kcal/mol, with an exact 95% interval of -4.94 to +11.75.
 - **Verdict:** inconclusive; no detectable shift.
-- **Limit:** equivalence within 2 kcal/mol could not be shown. Stock searches alone spread over about 13 kcal/mol (interquartile range) on this system. Thirteen of the 15 finished stock searches ended between -1.1 and +24.1 kcal/mol relative to the conventional search; two CPU-mode runs of the FastCREST binary ended more than 110 kcal/mol higher, for reasons not yet traced.
+- **Limit:** equivalence within 2 kcal/mol could not be shown. Stock searches alone spread over about 13 kcal/mol (interquartile range) on this system. Thirteen of the 15 finished stock searches ended between -1.1 and +24.1 kcal/mol relative to the conventional search; the other two ended more than 110 kcal/mol higher because of an upstream CREST fallback: when the topology check rejects every structure of a CREGEN call, CREGEN keeps the reference geometry (`coord`, here the helical input) labeled with the lowest energy seen, and the MD stage then starts from it. The fallback is in `cregen.f90`, unchanged by our patches and identical in the 3.0.2 release.
 
 ## Check of the released build
 

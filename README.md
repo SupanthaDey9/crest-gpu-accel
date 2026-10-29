@@ -147,6 +147,7 @@ See `docs/VALIDATION.md`. In short:
 ## Known limitations
 
 - **One test system:** all measurements come from one system (a 274-atom, +4 Ga peptide) with `--quick`.
+- **CREST fallback to the input geometry:** when CREST's topology check rejects every structure of one CREGEN call, CREGEN keeps the reference geometry labeled with the lowest energy seen, and the search continues from it. This is upstream CREST code (also in the 3.0.2 release). It sent 2 of our 26 Ga test searches back to the helical input. If `crest_best.xyz` is almost identical to your input, check `crest.out` for CREGEN calls where all structures were removed by the topology check.
 - **Late-resume failure:** a resume late in the MTD loop (from the fourth MTD batch on) can fail with "File crest_rotamers_3.xyz is empty". Give jobs enough time that late preemptions are rare.
 - **Open-shell metals:** for open-shell Cu and Ni peptides at these settings, most MTDs stopped early. The same happened for Fe with the release build.
 - **Untested combinations:** the full benchmark searches used the Slurm mode. The single-machine mode was tested on small molecules only.

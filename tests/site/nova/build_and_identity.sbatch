@@ -1,6 +1,6 @@
 #!/bin/bash -l
 # Nova: clean build from GitHub, then a check against the benchmarked binary, on one CPU node.
-# Usage: sbatch tests/site/nova/build_and_identity.sbatch <release dir> <work dir> <benchmarked binary> <Ga input pdb>
+# Usage: sbatch tests/site/nova/build_and_identity.sbatch <FastCREST clone> <work dir> <benchmarked binary> <Ga input pdb>
 #SBATCH --job-name=crest-rel-build
 #SBATCH --partition=nova
 #SBATCH --account=<account>

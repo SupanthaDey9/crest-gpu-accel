@@ -1,6 +1,6 @@
 # Validation record
 
-All tests ran on the ISU Nova cluster. The code-level tests and the replicate searches used the 274-atom, +4 Ga peptide in ALPB water; `tests/run_tests.sh` uses the 12-atom smoke molecule. The pass criteria of the code-level tests were fixed before the runs; the rule for the replicate searches was fixed before any group summary, after some single-run values had been seen. Five configurations were compared:
+All tests ran on the Nova cluster at Iowa State University. The code-level tests and the replicate searches used the 274-atom, +4 Ga peptide in ALPB water; `tests/run_tests.sh` uses the 12-atom test molecule in `examples/smoke/`. The pass criteria of the code-level tests (startup, single points, controlled MD) were fixed before the runs. The decision rule for the replicate searches was fixed after some individual results had been seen, but before any group statistic was computed. Five configurations were compared:
 
 | Name | What it is |
 |---|---|
@@ -21,7 +21,7 @@ Every configuration made the same decisions before the first trajectory:
 
 ## Single points: 306 structures
 
-The structures are the conventional search's 135 final conformers, 50 of its MD frames and 121 others.
+The structures are the conventional search's 135 final conformers, 50 of its MD frames, 4 input and pre-optimized geometries, and 117 structures from a search with an earlier build that ran only the eigensolve on the GPU.
 
 | Comparison | max abs dE (Eh) | max abs dG (Eh/bohr) |
 |---|---|---|
@@ -30,6 +30,12 @@ The structures are the conventional search's 135 final conformers, 50 of its MD 
 | FastCREST, CPU vs unmodified | 0 (bitwise) | 0 |
 | FastCREST: GPU vs CPU | 3.98e-13 | 4.0e-15 |
 | FastCREST, GPU vs release | 1.01e-10 | 8.16e-11 |
+
+Criterion, fixed before the runs: max abs dE <= 1e-8 Eh and max abs dG <= 1e-6 Eh/bohr. Every comparison passes; the largest differences, to the release, are two orders of magnitude inside it.
+
+## Upstream change since the release
+
+Of the 80 upstream commits between the 3.0.2 release and cfdc301f, one can change results: unconverged ANCOPT optimizations now stop after 200 cycles (the release ran up to 239 cycles in our test). On 200 MD frames this left 2 to 3 more unconverged structures per 100 than the release, above our preset limit of 1 per 100, so this test failed. We kept the commit because every structure that converged in both builds got the same topology-check result, and the controlled MD below, whose post-MD optimizations are capped only in our builds, passed.
 
 ## Controlled MD
 
@@ -41,7 +47,7 @@ Each comparison used 20 ps runs from four starts, at 400 and 500 K, with identic
 | unmodified vs release | -0.015 to +0.017 | -0.039 to +0.030 |
 | unmodified: TOML vs command line | -0.005 to +0.034 | -0.030 to +0.110 |
 | FastCREST, CPU vs unmodified (TOML) | -0.043 to +0.005 | -0.137 to -0.007 |
-| FastCREST: GPU vs CPU | -0.000 to +0.050 | +0.008 to +0.134 |
+| FastCREST: GPU vs CPU | 0.000 to +0.050 | +0.008 to +0.134 |
 | FastCREST, GPU vs unmodified (command line) | -0.001 to +0.030 | +0.005 to +0.072 |
 | FastCREST, GPU vs release | -0.003 to +0.033 | -0.014 to +0.082 |
 
@@ -49,24 +55,36 @@ Every comparison is equivalent. Three intervals after optimization exclude zero 
 
 ## Replicate searches
 
-**Endpoint.** The lowest crude-level energy after the first MTD round.
+**Endpoint.** The lowest crude-level energy after the first MTD iteration.
 
 **Groups.** 16 FastCREST searches against 17 stock searches (unmodified numerics, including the FastCREST binary with its GPU code off).
 
+**Conditions.** The groups ran under different conditions. An uncorrectable memory error on one GPU stopped the resumed jobs of 17 of 40 FastCREST replicates at startup; after seeing interim results we did not resubmit them, and 7 more were canceled early or still queued. Thirteen of the 16 FastCREST searches but 7 of the 17 stock ones resumed from checkpoints before the endpoint. Twelve of the 16 FastCREST searches finished their first MTD iteration on L40S or V100 GPUs, which the code-level tests did not cover, and 6 of the 16 computed the three-body term on the CPU in at least part of the run.
+
 **Result.**
 
-- **Shift:** the Hodges-Lehmann shift was +4.09 kcal/mol, with an exact 95% interval of -4.94 to +11.75.
+- **Shift:** FastCREST endpoints were typically 4.09 kcal/mol higher than stock ones (Hodges-Lehmann shift), with an exact 95% interval of -4.94 to +11.75 kcal/mol.
 - **Verdict:** inconclusive; no detectable shift.
-- **Limit:** equivalence within 2 kcal/mol could not be shown. Stock searches alone spread over about 13 kcal/mol (interquartile range) on this system. Thirteen of the 15 finished stock searches ended between -1.1 and +24.1 kcal/mol relative to the conventional search; the other two ended more than 110 kcal/mol higher because of an upstream CREST fallback: when the topology check rejects every structure of a CREGEN call, CREGEN keeps the reference geometry (`coord`, here the helical input) labeled with the lowest energy seen, and the MD stage then starts from it. The fallback is in `cregen.f90`, unchanged by our patches and identical in the 3.0.2 release.
+- **Limit:** equivalence within 2 kcal/mol could not be shown. Stock searches alone spread over about 13 kcal/mol (interquartile range) on this system.
+- **Run-to-run spread:** thirteen of the 15 finished stock searches ended between -1.1 and +24.1 kcal/mol relative to the conventional search. The other two ended more than 110 kcal/mol higher because of an upstream CREST fallback. When the topology check rejects every structure of a CREGEN call, CREGEN keeps the reference geometry (`coord`, here the helical input) labeled with the lowest energy seen, and the MD stage then starts from it. The fallback is in `cregen.f90`, unchanged by our patches and identical in the 3.0.2 release.
+
+## Structures
+
+Final ensembles of the conventional search and of the 25 finished replicate searches (10 FastCREST, 15 stock), superposed on the Ga site:
+
+- CREST's topology check holds the input's five Ga-O bonds, so every final conformer keeps them.
+- All 10 FastCREST and 13 of the 15 stock searches ended in compact conformers (radius of gyration 6.2 to 6.7 Å, against 7.56 Å for the helical input); the other two are the fallback cases above.
+- The lowest FastCREST conformer lies 0.7 kcal/mol above the conventional one, with the same six Ga-O contacts (distances within 0.08 Å). Its Cα atoms coincide with the conventional ones within 2.1 Å from Arg4 to Lys15; Met1 to Thr3 point elsewhere.
+- Median final energies: FastCREST +10.5 and stock +15.3 kcal/mol relative to the conventional search (post hoc Hodges-Lehmann shift -2.7 kcal/mol, 95% interval -11.3 to +6.5).
 
 ## Check of the released build
 
 `build.sh` builds from upstream plus `patches/`. Two checks are run on the result:
 
-- **Same numbers as the benchmarked binary:** a single-thread single point of the Ga peptide must give a `crest.engrad` byte-identical to the one from the binary that produced every result above.
+- **Same numbers as the benchmarked binary:** a single-thread single point of the Ga peptide must give a `crest.engrad` byte-identical to the one from the FastCREST binary used for the results above.
 - **Repeatable checks:** `tests/run_tests.sh` repeats the single-point checks (CPU against a reference binary, GPU against CPU) and runs a short GPU search, optionally with distributed passes.
 
-### Results on ISU Nova (2026-10-28, fresh clone of this repository from GitHub, commit d6c51ab)
+### Results on Nova (2026-10-28, fresh clone of this repository from GitHub, commit d6c51ab)
 
 | Item | Value |
 |---|---|
@@ -74,7 +92,7 @@ Every comparison is equivalent. Three intervals after optimization exclude zero 
 | Build | `build.sh` with sources fetched from GitHub, gfortran 11.5.0, CMake 3.30.2, CUDA 12.4.1, OpenBLAS 0.3.27; 414 s on 8 cores of a Xeon Platinum 8260 node (earlier builds of the same patches took 291 and 322 s) |
 | Binary | sha256 0d9a8311... A fresh build is not expected to be byte-identical to the benchmarked binary (different build paths and link order), so the single point below compares results instead |
 | Single point vs benchmarked binary | Ga peptide, `-T 1`, CPU solver: `crest.engrad` byte-identical to the benchmarked binary (sha256 of the file 39765069...; E = -415.262561312859191 Eh) |
-| `run_tests.sh`, A100 80GB PCIe node | 1 CPU single point: pass. 2 against the benchmarked binary: bitwise identical. 3 GPU single point vs CPU: max abs dE 8.9e-15 Eh, max abs dG 1.0e-15 Eh/bohr, three-body kernel ran on the GPU (1 call, 0 fallbacks). 4 short GPU search: normal termination |
+| `run_tests.sh`, A100 80GB PCIe node | Test 1 (CPU single point): pass. Test 2 (against the benchmarked binary): bitwise identical. Test 3 (GPU single point vs CPU): max abs dE 8.9e-15 Eh, max abs dG 1.0e-15 Eh/bohr, three-body kernel ran on the GPU (1 call, 0 fallbacks). Test 4 (short GPU search): normal termination |
 | Distributed passes (`--dist`, GPU driver, CPU workers on a CPU partition) | a short search in which 635 structures were optimized by Slurm worker jobs on other nodes, checked by the driver and merged; normal termination in 252 s |
 
 The same checks passed on 2026-10-26 and 2026-10-27 for earlier revisions of the patches, which differed only in source comments and two CMake message strings.

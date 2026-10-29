@@ -4,7 +4,7 @@
 #
 # The thread settings do not change the arithmetic of a single-threaded run; with more threads, results differ from run
 # to run only through reduction order, as for any multithreaded CREST run. In gpu mode, CREST_ATM_GPU=1 swaps in the GPU
-# three-body kernel, which agrees with the CPU routine to 4.4e-18 Eh/bohr but is not bitwise equal (docs/VALIDATION.md).
+# three-body kernel, which agrees with the CPU routine to 4.4e-18 Eh/bohr but is not bitwise equal (docs/HOW_IT_WORKS.md).
 
 # Thread layout. The OpenMP default (dynamic,1 schedule, unbound threads) hid almost all thread scaling of the SCC in
 # our tests; a static schedule with bound threads made MTD 2.18x faster per energy+gradient on the same node.

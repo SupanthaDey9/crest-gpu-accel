@@ -1,6 +1,6 @@
 #!/bin/bash -l
 # Nova: run tests/run_tests.sh on a GPU node, including the distributed-pass test and a comparison with the benchmarked binary.
-# Usage: sbatch [--dependency=afterok:<build job>] tests/site/nova/gpu_tests.sbatch <release dir> <work dir> <benchmarked binary>
+# Usage: sbatch [--dependency=afterok:<build job>] tests/site/nova/gpu_tests.sbatch <FastCREST clone> <work dir> <benchmarked binary>
 #SBATCH --job-name=crest-rel-gputest
 #SBATCH --partition=scavenger
 #SBATCH --account=<scavenger account>
@@ -10,6 +10,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=a100|h200|l40s
+# nova24-gpu-1 is excluded because its GPU reported uncorrectable ECC errors during our runs.
 #SBATCH --exclude=nova24-gpu-1
 #SBATCH --mem=16G
 #SBATCH --time=01:00:00

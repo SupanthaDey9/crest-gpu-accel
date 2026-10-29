@@ -7,7 +7,7 @@
 #SBATCH --mem=1G
 #SBATCH --time=00:05:00
 #SBATCH --output=<your work folder>/netprobe-%j.log
-# Does a compute node reach GitHub? (decides whether the release build can fetch sources itself)
+# Does a compute node reach GitHub? (decides whether build.sh can fetch the sources on a compute node)
 hostname
 timeout 60 git ls-remote https://github.com/crest-lab/crest.git HEAD && echo NET_OK || echo NET_FAIL
 module avail cmake ninja openblas cuda gcc 2>&1 | grep -E "cmake|ninja|openblas|cuda/12" | head -20

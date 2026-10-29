@@ -4,9 +4,9 @@
 #   sbatch --parsable --export=NONE --job-name=cdo_<tag> --array=<chunks>%<throttle> --cpus-per-task=<TW> \
 #          --output=<pass>/logs/w_%A_%a.out <sbatch_args of the config> dist_worker.sbatch <pass dir>
 # The task runs the driver's own crest binary (path and sha256 from <pass>/worker.env) as
-# runtype ancopt_ensemble on <pass>/worker.toml in a job-private /tmp folder; crest reads the exact pass
-# coordinates and the pass's optimizer settings from chunks/chunk_<c>.bin (CREST_DIST_OLOOP_WORKER), refuses on
-# any settings mismatch, and writes results/chunk_<c>.bin atomically (CREST_DIST_OLOOP_RESULT).
+# runtype ancopt_ensemble on <pass>/worker.toml in a job-private folder under $TMPDIR (or /tmp). crest reads the exact
+# pass coordinates and optimizer settings from chunks/chunk_<c>.bin (CREST_DIST_OLOOP_WORKER) and stops if any setting
+# differs. It writes results/chunk_<c>.bin atomically (CREST_DIST_OLOOP_RESULT).
 # A task whose result exists exits at once (checked at the start and again just before crest starts), so requeued
 # (preempted) or resubmitted tasks do not redo a chunk. The driver cancels pending tasks of chunks it computes itself.
 # Nothing is deleted by this script; it works in $TMPDIR (or /tmp), which most Slurm sites clean after the job.

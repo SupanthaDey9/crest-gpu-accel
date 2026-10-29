@@ -17,7 +17,7 @@
 # Load the compiler runtime, OpenBLAS and CUDA modules the binary was built with before calling sbatch (or below).
 #
 # Time limit: give the job the time the whole search needs. The stage after the MTD loop (MD stage + its optimization
-# pass) can only restart from its beginning, so short self-requeuing segments may never finish it.
+# pass) can only restart from its beginning, so a job that requeues itself in short pieces may never finish it.
 #SBATCH --job-name=crest-gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1

@@ -77,7 +77,7 @@ if sp sp_cpu "$CREST" cpu; then ok "1 sp_cpu: $(sed -n 8p "$WORK/sp_cpu/crest.en
 
 if [[ -n $REF ]]; then
   # same CPU model and OpenBLAS: an unmodified build of the same CREST commit gives byte-identical files; the 3.0.2
-  # release differs at the 1e-10 Eh level (identity tier)
+  # release differs at the 1e-10 Eh level, inside the 1e-8 Eh tolerance
   if sp sp_ref "$REF" cpu; then
     r=$(python3 "$HERE/compare_engrad.py" "$WORK/sp_cpu/crest.engrad" "$WORK/sp_ref/crest.engrad" 1e-8 1e-6); rc=$?
     if [[ $rc == 0 ]]; then ok "2 sp_ref: $r"; else bad "2 sp_ref: $r"; fi

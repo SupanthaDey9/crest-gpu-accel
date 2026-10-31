@@ -40,7 +40,7 @@ The two searches did different amounts of work, because CREST repeats iterations
 
 ```bash
 module load gcc cmake ninja openblas cuda     # or your site's equivalents
-git clone https://github.com/chowdhurylab/FastCREST.git && cd FastCREST
+git clone https://github.com/chowdhurylab-studio/fastCREST.git && cd fastCREST
 ./build.sh --jobs 8                           # fetches CREST cfdc301f and pinned dependencies, patches, builds bin/crest
 tests/run_tests.sh bin/crest                  # on a GPU node: single points (CPU, GPU) and a short GPU search
 ```

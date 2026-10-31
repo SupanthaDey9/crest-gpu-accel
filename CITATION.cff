@@ -1,12 +1,12 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below, and also cite the CREST papers listed under references."
 title: "FastCREST: faster CREST conformer searches with one GPU and distributed optimization passes"
-version: 1.0.4
-date-released: 2026-10-28
+version: 1.0.5
+date-released: 2026-10-31
 license:
   - LGPL-3.0-or-later
   - Apache-2.0
-repository-code: "https://github.com/chowdhurylab/FastCREST"
+repository-code: "https://github.com/chowdhurylab-studio/fastCREST"
 authors:
   - family-names: Dey
     given-names: Supantha

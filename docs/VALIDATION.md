@@ -1,10 +1,12 @@
 # Validation record
 
-All tests ran on the Nova cluster at Iowa State University. The code-level tests and the replicate searches used the 274-atom, +4 Ga peptide in ALPB water; `tests/run_tests.sh` uses the 12-atom test molecule in `examples/smoke/`. The pass criteria of the code-level tests (startup, single points, controlled MD) were fixed before the runs. The decision rule for the replicate searches was fixed after some individual results had been seen, but before any group statistic was computed. Five configurations were compared:
+All tests ran on the Nova cluster at Iowa State University. The code-level tests and the replicate searches used the 274-atom, +4 Ga peptide in ALPB water; `tests/run_tests.sh` uses the 12-atom test molecule in `examples/smoke/`. The pass criteria of the code-level tests (startup, single points, controlled MD) were fixed before the runs. The decision rule for the replicate searches was fixed after some individual results had been seen, but before any group statistic was computed.
+
+Names: **conventional CREST** means CREST without our GPU code; the **reference search** is the original 321.5 h conventional CREST search, made with the 3.0.2 release. Five configurations were compared:
 
 | Name | What it is |
 |---|---|
-| release | CREST 3.0.2 release (conda-forge), used by the conventional search |
+| release | CREST 3.0.2 release (conda-forge), used by the reference search |
 | unmodified | our build of CREST commit cfdc301f without these patches, run from the command line |
 | unmodified, TOML | the same build, run from TOML input |
 | FastCREST, CPU | FastCREST with every GPU switch off |
@@ -21,7 +23,7 @@ Every configuration made the same decisions before the first trajectory:
 
 ## Single points: 306 structures
 
-The structures are the conventional search's 135 final conformers, 50 of its MD frames, 4 input and pre-optimized geometries, and 117 structures from a search with an earlier build that ran only the eigensolve on the GPU.
+The structures are the reference search's 135 final conformers, 50 of its MD frames, 4 input and pre-optimized geometries, and 117 structures from a search with an earlier build that ran only the eigensolve on the GPU.
 
 | Comparison | max abs dE (Eh) | max abs dG (Eh/bohr) |
 |---|---|---|
@@ -57,25 +59,25 @@ Every comparison is equivalent. Three intervals after optimization exclude zero 
 
 **Endpoint.** The lowest crude-level energy after the first MTD iteration.
 
-**Groups.** 16 FastCREST searches against 17 stock searches (unmodified numerics, including the FastCREST binary with its GPU code off).
+**Groups.** 16 FastCREST searches against 17 conventional CREST searches: CPU only, with the unmodified build or the FastCREST binary with its GPU code off (bitwise the same single-thread numbers), all with the tuned thread settings and most with distributed passes, which change speed but not the computation.
 
-**Conditions.** The groups ran under different conditions. An uncorrectable memory error on one GPU stopped the resumed jobs of 17 of 40 FastCREST replicates at startup; after seeing interim results we did not resubmit them, and 7 more were canceled early or still queued. Thirteen of the 16 FastCREST searches but 7 of the 17 stock ones resumed from checkpoints before the endpoint. Twelve of the 16 FastCREST searches finished their first MTD iteration on L40S or V100 GPUs, which the code-level tests did not cover, and 6 of the 16 computed the three-body term on the CPU in at least part of the run.
+**Conditions.** The groups ran under different conditions. An uncorrectable memory error on one GPU stopped the resumed jobs of 17 of 40 FastCREST replicates at startup; after seeing interim results we did not resubmit them, and 7 more were canceled early or still queued. Thirteen of the 16 FastCREST searches but 7 of the 17 conventional CREST ones resumed from checkpoints before the endpoint. Twelve of the 16 FastCREST searches finished their first MTD iteration on L40S or V100 GPUs, which the code-level tests did not cover, and 6 of the 16 computed the three-body term on the CPU in at least part of the run.
 
 **Result.**
 
-- **Shift:** FastCREST endpoints were typically 4.09 kcal/mol higher than stock ones (Hodges-Lehmann shift), with an exact 95% interval of -4.94 to +11.75 kcal/mol.
+- **Shift:** FastCREST endpoints were typically 4.09 kcal/mol higher than conventional CREST ones (Hodges-Lehmann shift), with an exact 95% interval of -4.94 to +11.75 kcal/mol.
 - **Verdict:** inconclusive; no detectable shift.
-- **Limit:** equivalence within 2 kcal/mol could not be shown. Stock searches alone spread over about 13 kcal/mol (interquartile range) on this system.
-- **Run-to-run spread:** thirteen of the 15 finished stock searches ended between -1.1 and +24.1 kcal/mol relative to the conventional search. The other two ended more than 110 kcal/mol higher because of an upstream CREST fallback. When the topology check rejects every structure of a CREGEN call, CREGEN keeps the reference geometry (`coord`, here the helical input) labeled with the lowest energy seen, and the MD stage then starts from it. The fallback is in `cregen.f90`, unchanged by our patches and identical in the 3.0.2 release.
+- **Limit:** equivalence within 2 kcal/mol could not be shown. Conventional CREST searches alone spread over about 13 kcal/mol (interquartile range) on this system.
+- **Run-to-run spread:** thirteen of the 15 finished conventional CREST searches ended between -1.1 and +24.1 kcal/mol relative to the reference search. The other two ended more than 110 kcal/mol higher because of an upstream CREST fallback. When the topology check rejects every structure of a CREGEN call, CREGEN keeps the reference geometry (`coord`, here the helical input) labeled with the lowest energy seen, and the MD stage then starts from it. The fallback is in `cregen.f90`, unchanged by our patches and identical in the 3.0.2 release.
 
 ## Structures
 
-Final ensembles of the conventional search and of the 25 finished replicate searches (10 FastCREST, 15 stock), superposed on the Ga site:
+Final ensembles of the reference search and of the 25 finished replicate searches (10 FastCREST, 15 conventional CREST), superposed on the Ga site:
 
 - CREST's topology check holds the input's five Ga-O bonds, so every final conformer keeps them.
-- All 10 FastCREST and 13 of the 15 stock searches ended in compact conformers (radius of gyration 6.2 to 6.7 Å, against 7.56 Å for the helical input); the other two are the fallback cases above.
-- The lowest FastCREST conformer lies 0.7 kcal/mol above the conventional one, with the same six Ga-O contacts (distances within 0.08 Å). Its Cα atoms coincide with the conventional ones within 2.1 Å from Arg4 to Lys15; Met1 to Thr3 point elsewhere.
-- Median final energies: FastCREST +10.5 and stock +15.3 kcal/mol relative to the conventional search (post hoc Hodges-Lehmann shift -2.7 kcal/mol, 95% interval -11.3 to +6.5).
+- All 10 FastCREST and 13 of the 15 conventional CREST searches ended in compact conformers (radius of gyration 6.2 to 6.7 Å, against 7.56 Å for the helical input); the other two are the fallback cases above.
+- The lowest FastCREST conformer lies 0.7 kcal/mol above the reference search's lowest, with the same six Ga-O contacts (distances within 0.08 Å). Its Cα atoms coincide with the reference ones within 2.1 Å from Arg4 to Lys15; Met1 to Thr3 point elsewhere.
+- Median final energies: FastCREST +10.5 and conventional CREST +15.3 kcal/mol relative to the reference search (post hoc Hodges-Lehmann shift -2.7 kcal/mol, 95% interval -11.3 to +6.5).
 
 ## Check of the released build
 

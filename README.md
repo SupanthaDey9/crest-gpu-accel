@@ -18,10 +18,24 @@ FastCREST is CREST commit cfdc301f (master branch, 80 commits after v3.0.2) plus
 
 | 274-atom Ga peptide, `--quick`, ALPB water | wall time | throughput (E/G calls per hour, relative) | CPU-hours | GPU-hours |
 |---|---|---|---|---|
-| conventional search: CREST 3.0.2 release, 32 threads | 321.5 h | 1.0x | 10,288 (32 threads x wall) | 0 |
+| reference search: conventional CREST, 3.0.2 release, 32 threads | 321.5 h | 1.0x | 10,288 (32 threads x wall) | 0 |
 | FastCREST, 1 A100 + CPU workers | 54.3 h | 8.1x | 8,936 | 54.3 |
 
-The two searches did different amounts of work, because CREST repeats iterations until it stops finding a lower conformer; compare the throughput column. Each speed number in this README is a single measurement (n = 1) on the Nova cluster at Iowa State University, documented in our paper (in preparation); `docs/VALIDATION.md` covers correctness.
+The two searches did different amounts of work, because CREST repeats iterations until it stops finding a lower conformer; compare the throughput column. Each whole-search number in this README is a single measurement (n = 1) on the Nova cluster at Iowa State University, documented in our paper (in preparation); `docs/VALIDATION.md` covers correctness. "Conventional CREST" means CREST without our GPU code; the 321.5 h search is our reference search.
+
+### Where the speed comes from
+
+Each change added in turn on one A100 node (EPYC 7543 host, 32 cores), one batch of six MTD trajectories per row, mean of two runs. A second A100 node gave the same within 5%.
+
+| Configuration | time per MTD step | vs conventional CREST |
+|---|---|---|
+| conventional CREST (unmodified build, OpenMP defaults) | 2.61 s | 1.0x |
+| + tuned threads (`scripts/crest-env.sh`) | 1.15 s | 2.3x |
+| + rewritten loops (this build, CPU only) | 1.11 s | 2.4x |
+| + GPU eigensolve (`tblite_solver = "cuda"`) | 0.52 s | 5.0x |
+| + GPU three-body term (`CREST_ATM_GPU=1`) = FastCREST | 0.48 s | 5.4x |
+
+The thread settings matter as much as the GPU. With OpenMP defaults, tblite's parallel loops hand out one iteration at a time, and five threads per trajectory computed an energy and gradient no faster than one. An unreleased variant with a warm-started Jacobi eigensolver reached 0.40 s per step; it is not part of this repository.
 
 ## What you need
 
@@ -123,7 +137,7 @@ The MTD step is still mostly host work: in a profile of an earlier build with on
 
 | Hardware | time per step | three-body term |
 |---|---|---|
-| conventional search (CREST 3.0.2 release), 32 threads | 2.8 s | CPU |
+| reference search (conventional CREST, 3.0.2 release), 32 threads | 2.8 s | CPU |
 | rewritten loops, CPU only, Zen 5, 64 threads | 0.74 s | CPU |
 | A100 + EPYC 7543 | 0.49 s | GPU |
 | H200 + Zen 5 | 0.39 s | GPU |
@@ -144,14 +158,14 @@ See `docs/VALIDATION.md`. In short:
 - **Single points:** on 306 structures, every configuration agrees with the release binary within 1.01e-10 Eh in energy and 8.16e-11 Eh/bohr in gradient, two orders of magnitude inside the preset 1e-8 Eh criterion. FastCREST on the CPU is bitwise identical to the unmodified build; FastCREST on the GPU agrees with it to 4e-13 Eh.
 - **Upstream change:** one commit between the 3.0.2 release and cfdc301f stops unconverged ANCOPT optimizations after 200 cycles. It left 2 to 3 more structures per 100 unconverged than the release, more than our preset limit of 1 per 100; we kept it (details in `docs/VALIDATION.md`).
 - **Controlled MD:** from identical starts and velocities, FastCREST on CPU and GPU, the unmodified build and the release change bonding topology in equivalent fractions of frames in all paired comparisons, within a preset margin of ±0.15 (two one-sided tests, 90% intervals).
-- **Replicate searches:** 16 FastCREST searches and 17 stock searches (unmodified numerics), all from the same input. The lowest energy after the first MTD iteration was typically 4.09 kcal/mol higher in FastCREST searches than in stock searches (Hodges-Lehmann shift; 95% interval −4.94 to +11.75 kcal/mol). The interval includes zero, so no shift was detected. The test is inconclusive: equivalence within 2 kcal/mol could not be shown, because CREST itself varies far more than that between runs on this system (interquartile range about 13 kcal/mol).
-- **Structures:** all 10 finished FastCREST searches and 13 of the 15 finished stock searches ended in compact conformers; the other two are explained under Known limitations. Median final energies were 10.5 kcal/mol (FastCREST) and 15.3 kcal/mol (stock) above the conventional search. Outside the Ga site, which CREST's topology check holds fixed, both differ from the conventional search mainly at the peptide termini. The lowest FastCREST conformer lies 0.7 kcal/mol above the conventional one.
+- **Replicate searches:** 16 FastCREST searches and 17 conventional CREST searches (CPU only, unmodified numerics), all from the same input. The lowest energy after the first MTD iteration was typically 4.09 kcal/mol higher in FastCREST searches than in conventional CREST searches (Hodges-Lehmann shift; 95% interval −4.94 to +11.75 kcal/mol). The interval includes zero, so no shift was detected. The test is inconclusive: equivalence within 2 kcal/mol could not be shown, because CREST itself varies far more than that between runs on this system (interquartile range about 13 kcal/mol).
+- **Structures:** all 10 finished FastCREST searches and 13 of the 15 finished conventional CREST searches ended in compact conformers; the other two are explained under Known limitations. Median final energies were 10.5 kcal/mol (FastCREST) and 15.3 kcal/mol (conventional CREST) above the reference search. Outside the Ga site, which CREST's topology check holds fixed, both differ from the reference search mainly at the peptide termini. The lowest FastCREST conformer lies 0.7 kcal/mol above the reference search's lowest.
 - **The released code:** built from GitHub with `build.sh`, it gives a single-thread single point byte-identical to the binary validated above. `tests/site/nova/` holds the Nova jobs used for this check.
 
 ## Known limitations
 
 - **One test system:** all measurements come from one system (a 274-atom, +4 Ga peptide) with `--quick`.
-- **CREST fallback to the input geometry:** when CREST's topology check rejects every structure of one CREGEN call, CREGEN keeps the reference geometry labeled with the lowest energy seen, and the search continues from it. This is upstream CREST code (also in the 3.0.2 release). It sent 2 of our 15 finished stock searches (and none of the 10 finished FastCREST searches) back to the helical input. If `crest_best.xyz` is almost identical to your input, check `crest.out` for CREGEN calls where all structures were removed by the topology check.
+- **CREST fallback to the input geometry:** when CREST's topology check rejects every structure of one CREGEN call, CREGEN keeps the reference geometry labeled with the lowest energy seen, and the search continues from it. This is upstream CREST code (also in the 3.0.2 release). It sent 2 of our 15 finished conventional CREST searches (and none of the 10 finished FastCREST searches) back to the helical input. If `crest_best.xyz` is almost identical to your input, check `crest.out` for CREGEN calls where all structures were removed by the topology check.
 - **Late-resume failure:** a resume late in the MTD loop (from the fourth MTD batch on) can fail with "File crest_rotamers_3.xyz is empty". Give jobs enough time that late preemptions are rare.
 - **Open-shell metals:** in single searches of open-shell Cu and Ni peptides at these settings, most MTDs stopped early. Fe searches with the release build did the same, so we cannot tell whether FastCREST plays a part.
 - **Untested combinations:** the full benchmark searches used the Slurm mode. The single-machine mode was tested on small molecules only.

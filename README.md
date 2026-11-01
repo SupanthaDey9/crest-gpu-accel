@@ -2,6 +2,8 @@
 
 Faster [CREST](https://github.com/crest-lab/crest) conformer searches (iMTD-GC, GFN2-xTB) with one GPU and many CPU jobs, with unchanged energies and gradients. FastCREST was first released as crest-gpu-accel.
 
+**Paper (in preparation):** [Markdown](docs/paper/FastCREST_paper.md) or [PDF](docs/paper/FastCREST_paper.pdf).
+
 A CREST search spends its time on two different kinds of work:
 
 - **Trajectories.** A few long metadynamics and MD trajectories, each waiting on one energy-and-gradient call per step.
@@ -177,4 +179,4 @@ See `docs/VALIDATION.md`. In short:
 
 - **CREST, tblite, dftd4, simple-dftd3:** these projects are LGPL-3.0-or-later, and the patches to them, the new CUDA, C++ and Fortran sources and the scripts are distributed under the same license (`COPYING`, `COPYING.LESSER`).
 - **mctc-lib, multicharge:** these projects are Apache-2.0, and the patches to them (`patches/deps/mctc-lib.patch`, `patches/deps/multicharge.patch`) are offered under Apache-2.0 (`LICENSE-Apache-2.0`).
-- **Citation:** GitHub's "Cite this repository" uses `CITATION.cff`. Please also cite the papers that CREST asks for: P. Pracht, F. Bohle, S. Grimme, *Phys. Chem. Chem. Phys.* **22**, 7169 (2020); S. Grimme, *J. Chem. Theory Comput.* **15**, 2847 (2019); and P. Pracht et al., *J. Chem. Phys.* **160**, 114110 (2024). Also cite GFN2-xTB (C. Bannwarth, S. Ehlert, S. Grimme, *J. Chem. Theory Comput.* **15**, 1652 (2019)) and our paper (in preparation).
+- **Citation:** GitHub's "Cite this repository" uses `CITATION.cff`. Please also cite the papers that CREST asks for: P. Pracht, F. Bohle, S. Grimme, *Phys. Chem. Chem. Phys.* **22**, 7169 (2020); S. Grimme, *J. Chem. Theory Comput.* **15**, 2847 (2019); and P. Pracht et al., *J. Chem. Phys.* **160**, 114110 (2024). Also cite GFN2-xTB (C. Bannwarth, S. Ehlert, S. Grimme, *J. Chem. Theory Comput.* **15**, 1652 (2019)) and our paper (in preparation; `docs/paper/`).

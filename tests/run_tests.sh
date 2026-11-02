@@ -13,11 +13,13 @@
 #   1 sp_cpu    single point, CPU solver, 1 thread, all CREST_* switches unset (the stock code path)
 #   2 sp_ref    the same with --reference: must agree to 1e-8 Eh, 1e-6 Eh/bohr (bitwise for the same CREST commit)
 #   3 sp_gpu    single point with tblite_solver = "cuda" and CREST_ATM_GPU=1: must match test 1 to 1e-8 Eh, 1e-6 Eh/bohr
+#   3b sp_jacobi  the same with CREST_CUDA_WARMJACOBI=1 (opt-in): must match test 1 likewise, with warm Jacobi solves
+#               and no fallback to the standard solver
 #   4 search    --quick iMTD-GC search on one machine with the GPU route and checkpoints: must end normally
 #   5 dist      the same search with CREST_DIST_OLOOP (optimization passes as Slurm array jobs)
 set -uo pipefail
 
-[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,17p' "$0"; exit 0; }
+[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,19p' "$0"; exit 0; }
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CREST=$(realpath "${1:?usage: run_tests.sh CREST [options]}") || exit 64; shift
 REF=''; DIST=''; WENV=$HERE/../slurm/worker_env.sh; GPU=1; MOL=$HERE/../examples/smoke/struc.xyz; CHRG=0; UHF=0; WORK=$PWD/crest-tests; T=4
@@ -94,6 +96,20 @@ if [[ $GPU == 1 ]]; then
     if [[ $rc == 0 ]]; then ok "3 sp_gpu: $r; $summ"; else bad "3 sp_gpu: $r"; fi
   else
     bad "3 sp_gpu: no GPU result, or the three-body kernel fell back to the CPU (see $WORK/sp_gpu/crest.err)"
+  fi
+
+  # opt-in warm-started Jacobi eigensolver: after the first SCC iteration the overlap factor is reused and syevj starts
+  # from the previous eigenvectors; STATS must show warm solves and no fallback to the standard solver
+  if sp sp_jacobi "$CREST" cuda CREST_ATM_GPU=1 CREST_CUDA_WARMJACOBI=1; then
+    stats=$(grep -h 'CREST_CUDA_WARMJACOBI_STATS' "$WORK/sp_jacobi/crest.err" | tail -1)
+    r=$(python3 "$HERE/compare_engrad.py" "$WORK/sp_jacobi/crest.engrad" "$WORK/sp_cpu/crest.engrad" 1e-8 1e-6); rc=$?
+    if [[ $rc == 0 && $stats =~ \ warm\ [1-9] && $stats =~ \ stock\ 0\ failed\ 0\  ]]; then
+      ok "3b sp_jacobi: $r; ${stats#CREST_CUDA_WARMJACOBI_STATS }"
+    else
+      bad "3b sp_jacobi: $r; ${stats:-no STATS line}"
+    fi
+  else
+    bad "3b sp_jacobi: no result (see $WORK/sp_jacobi/crest.err)"
   fi
 
   search() {  # search <dir> [env...]

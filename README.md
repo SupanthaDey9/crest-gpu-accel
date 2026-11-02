@@ -36,8 +36,9 @@ Each change added in turn on one A100 node (EPYC 7543 host, 32 cores), one batch
 | + rewritten loops (this build, CPU only) | 1.11 s | 2.4x |
 | + GPU eigensolve (`tblite_solver = "cuda"`) | 0.52 s | 5.0x |
 | + GPU three-body term (`CREST_ATM_GPU=1`) = FastCREST | 0.48 s | 5.4x |
+| + warm-started Jacobi eigensolver (`CREST_CUDA_WARMJACOBI=1`, opt-in) | 0.40 s | 6.5x |
 
-The thread settings matter as much as the GPU. With OpenMP defaults, tblite's parallel loops hand out one iteration at a time, and five threads per trajectory computed an energy and gradient no faster than one. An unreleased variant with a warm-started Jacobi eigensolver reached 0.40 s per step; it is not part of this repository.
+The thread settings matter as much as the GPU. With OpenMP defaults, tblite's parallel loops hand out one iteration at a time, and five threads per trajectory computed an energy and gradient no faster than one. The opt-in warm-started Jacobi eigensolver (`CREST_CUDA_WARMJACOBI=1`) is the fastest setting: it keeps the Cholesky factor of the overlap matrix for all SCC iterations of one energy and gradient evaluation and starts cuSOLVER's Jacobi solver from the previous iteration's eigenvectors (2.8 sweeps on average). Energies and gradients agree with the standard solver to about 1e-13 Eh. It is off by default because it was tested only on A100 GPUs, and its gain shrinks for larger molecules (1.24x at 236 atoms, 1.09x at 339 atoms over FastCREST).
 
 ## What you need
 
@@ -126,6 +127,7 @@ sbatch --partition=<gpu partition> --account=<account> slurm/crest_search.sbatch
 | `CREST_CKPT=40` | environment | exact checkpoint of every trajectory every 40 steps, and a journal of every optimized structure |
 | `CREST_RESUME_POST=fallback` | environment | a resume after the MTD loop restarts the following stage from its beginning instead of stopping with exit code 3 |
 | `CREST_DIST_OLOOP=<file>` | environment | distribute optimization passes as Slurm arrays (file format in `docs/HOW_IT_WORKS.md`) |
+| `CREST_CUDA_WARMJACOBI=1` | environment | opt-in: warm-started Jacobi eigensolver instead of `dsygvd` (about 1.2x per MTD step on an A100). A non-converged Jacobi solve falls back to the standard solver within the same call; the counts are printed as `CREST_CUDA_WARMJACOBI_STATS` on stderr |
 | `CREST_CUDA_MULTI_DEVICE=1` | environment | spread GPU sessions over several visible GPUs. Not recommended: two GPUs gave only 1.19x for one search, so run two searches instead |
 | `OMP_*`, `OPENBLAS_NUM_THREADS=1`, ... | `scripts/crest-env.sh` | thread layout. Keep OpenBLAS at one thread; otherwise it floods the output with "Detect OpenMP Loop" warnings |
 

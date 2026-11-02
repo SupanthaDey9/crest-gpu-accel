@@ -4322,7 +4322,7 @@ diff -ruN a/src/calculator/calculator.F90 b/src/calculator/calculator.F90
 diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/crest_cuda_bridge.cpp
 --- a/src/calculator/cuda/crest_cuda_bridge.cpp
 +++ b/src/calculator/cuda/crest_cuda_bridge.cpp
-@@ -0,0 +1,694 @@
+@@ -0,0 +1,1275 @@
 +// SPDX-License-Identifier: LGPL-3.0-or-later
 +#include "crest_cuda_bridge.h"
 +
@@ -4331,12 +4331,15 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +#include <cublas_v2.h>
 +
 +#include <atomic>
++#include <cmath>
 +#include <cstddef>
 +#include <cstdio>
 +#include <cstdlib>
 +#include <cstring>
++#include <initializer_list>
 +#include <limits>
 +#include <new>
++#include <utility>
 +
 +namespace {
 +
@@ -4356,6 +4359,30 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +    double *density = nullptr;
 +    crest_cuda_stats stats{};
 +    crest_cuda_error error{};
++    // CREST_CUDA_WARMJACOBI=1 only (null/false otherwise). Overlap factor cache: W = U^-1 of S = U^T U.
++    double *cf = nullptr;      // device: W; never aliased with a/b/w
++    double *cones = nullptr;   // device: n ones, the identity's diagonal
++    int *cinfo = nullptr;      // device: [0] potrf info, [1] syevd/syevj info
++    double *cwork = nullptr;   // device: potrf/syevd workspace, only when sygvd's work is too small
++    int clwork = 0;
++    double *ckey = nullptr;    // host: the overlap bytes W was built from (upper triangle compared)
++    bool cc_tried = false;     // cache initialization attempted
++    bool cc_ready = false;     // cache usable on this session
++    bool cc_valid = false;     // cf matches ckey
++    // Warm start: eigenvectors V_prev of the last solved reduced matrix H' = W^T H W.
++    double *hp = nullptr;      // device: H' of the current solve (the cold path diagonalizes it in place)
++    double *vp = nullptr;      // device: V_prev, orthonormal eigenvectors of the last solved H' (ascending)
++    double *vt = nullptr;      // device: V = V_prev Y before the re-orthonormalization
++    double *ident = nullptr;   // device: the n x n identity
++    double *wjwork = nullptr;  // device: syevj workspace, only when syevj needs more than the cache's
++    int wjlwork = 0;
++    syevjInfo_t sj = nullptr;  // syevj parameters: tolerance 1e-14, max sweeps 15, sorted eigenvalues
++    bool wj_tried = false;     // warm initialization attempted
++    bool wj_ready = false;     // warm path usable on this session
++    bool wj_valid = false;     // vp belongs to the cached factor and to the last successful solve
++    int wj_fail_run = 0;       // consecutive solves that went to stock_solve or failed
++    double *rq = nullptr;      // device: 2n, Rayleigh numerators v_i^T H' v_i, then denominators v_i^T v_i
++    double *rqh = nullptr;     // host: 2n, rq downloaded; [0, n) then holds the quotients (the returned eigenvalues)
 +};
 +
 +void record(crest_cuda_error &e, int status, int stage, int native) noexcept {
@@ -4410,6 +4437,19 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +    if (s.w) runtime_ok(cudaFree(s.w), CREST_CUDA_STAGE_DEVICE_FREE, e);
 +    if (s.work) runtime_ok(cudaFree(s.work), CREST_CUDA_STAGE_DEVICE_FREE, e);
 +    if (s.info) runtime_ok(cudaFree(s.info), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    if (s.cf) runtime_ok(cudaFree(s.cf), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    if (s.cones) runtime_ok(cudaFree(s.cones), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    if (s.cinfo) runtime_ok(cudaFree(s.cinfo), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    if (s.cwork) runtime_ok(cudaFree(s.cwork), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    delete[] s.ckey;
++    if (s.sj) solver_ok(cusolverDnDestroySyevjInfo(s.sj), CREST_CUDA_STAGE_SOLVER_DESTROY, e);
++    if (s.hp) runtime_ok(cudaFree(s.hp), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    if (s.vp) runtime_ok(cudaFree(s.vp), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    if (s.vt) runtime_ok(cudaFree(s.vt), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    if (s.ident) runtime_ok(cudaFree(s.ident), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    if (s.wjwork) runtime_ok(cudaFree(s.wjwork), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    if (s.rq) runtime_ok(cudaFree(s.rq), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    delete[] s.rqh;
 +    if (s.stream)
 +        runtime_ok(cudaStreamDestroy(s.stream), CREST_CUDA_STAGE_STREAM_DESTROY, e);
 +}
@@ -4578,10 +4618,11 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +    return e.status;
 +}
 +
-+extern "C" int crest_cuda_solve(void *handle, int n, double *hmat,
-+                                 const double *smat, double *eval) noexcept {
-+    if (!handle) return CREST_CUDA_INVALID_ARGUMENT;
-+    Session &s = *static_cast<Session *>(handle);
++namespace {
++
++/* The standard path: one cusolverDnDsygvd call (type 1, upper triangle). crest_cuda_solve below runs it unless the
++ * opt-in warm-started Jacobi path answered. */
++int stock_solve(Session &s, int n, double *hmat, const double *smat, double *eval) noexcept {
 +    crest_cuda_error e{};
 +    if (!hmat || !smat || !eval) {
 +        record(e, CREST_CUDA_INVALID_ARGUMENT, CREST_CUDA_STAGE_ARGUMENT, 0);
@@ -4619,6 +4660,546 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +    else ++s.stats.successful_solves;
 +    s.error = e;
 +    return e.status;
++}
++
++/* Opt-in warm-started Jacobi eigensolver: CREST_CUDA_WARMJACOBI=1 (read once per process; unset or any other value:
++ * stock_solve only). Each session keeps W = U^-1 of its overlap (S = U^T U, potrf on the upper triangle that sygvd
++ * reads) and a host copy of the overlap W was built from; when the upper triangle of S is byte-identical to that copy
++ * (all SCC iterations of one energy and gradient evaluation), W is reused. Each solve reduces H' = W^T H W (symm +
++ * trmm). Warm (a reused W and a valid V_prev, the eigenvectors of the last solved H'):
++ *   H'' = V_prev^T H' V_prev   symm + gemm
++ *   H'' = Y diag(w) Y^T        cusolverDnDsyevj (upper, tolerance 1e-14, at most 15 sweeps, sorted ascending)
++ *   V = V_prev Y; V <- V (1.5 I - 0.5 V^T V)   one Newton-Schulz step, so the orthogonality error of the chain of
++ *                              warm starts does not accumulate
++ *   w_i = v_i^T H' v_i / v_i^T v_i   Rayleigh quotients of the final V on H' (symm + 2 dgmm + 2 gemm against the ones
++ *                              vector, divided on the host); they replace syevj's eigenvalues
++ *   C = W V                    trmm (C^T S C = I, as sygvd type 1); the pairs (w_i, c_i) are then put in ascending
++ *                              order (only pairs closer than the Rayleigh shift can move)
++ * Cold (a new S, the first solve of a session or after a fallback): syevd(H') in place, V_prev = its eigenvectors,
++ * C = W V. A warm attempt that does not converge (syevj info n+1) or fails otherwise falls back to the cold path in the
++ * same call (the warm path never writes H'). A failure of the cold part falls back to stock_solve on the untouched
++ * caller arrays, so real faults surface with the stock status, stage and info. Three stock fallbacks in a row turn the
++ * session to stock. Not bitwise equal to sygvd (converged to roundoff). Diagnostics on stderr: CREST_CUDA_WARMJACOBI
++ * enabled, STATS (every 4096 solves and at exit), FALLBACK (first 20) and SESSION lines. */
++constexpr int kWarmDone = 0;      // the warm or cold path answered (s.error holds the result)
++constexpr int kWarmFallback = 1;  // nothing was written to the caller's arrays: run stock_solve
++constexpr double kWarmTol = 1e-14;
++constexpr int kWarmMaxSweeps = 15;
++
++std::atomic<unsigned long long> wj_calls{0};
++std::atomic<unsigned long long> wj_warm{0};
++std::atomic<unsigned long long> wj_cold{0};
++std::atomic<unsigned long long> wj_stock{0};
++std::atomic<unsigned long long> wj_failed{0};
++std::atomic<unsigned long long> wj_bypassed{0};
++std::atomic<unsigned long long> wj_hits{0};
++std::atomic<unsigned long long> wj_misses{0};
++std::atomic<unsigned long long> wj_fallbacks{0};
++std::atomic<unsigned long long> wj_noconv{0};
++std::atomic<unsigned long long> wj_sessions_off{0};
++std::atomic<unsigned long long> wj_sweeps{0};
++std::atomic<int> wj_sweeps_max{0};
++std::atomic<int> wj_fallback_lines{0};
++std::atomic<unsigned long long> wj_rq_reorders{0};  // warm solves whose Rayleigh quotients changed the order
++std::atomic<double> wj_rq_shift_max{0.0};           // max |Rayleigh quotient - syevj eigenvalue| over warm solves
++
++// calls is printed as the sum of the outcome counters read here (warm + cold + stock + failed + bypassed), so every
++// line adds up even while other threads are solving. fallbacks counts warm attempts that went on to the cold path
++// (noconv of them because syevj reported info n+1); hits + misses = warm + cold; sweeps_mean/max are over the warm
++// solves.
++void warmjacobi_stats_line() noexcept {
++    const unsigned long long w = wj_warm.load(), c = wj_cold.load(), st = wj_stock.load(), x = wj_failed.load(),
++                             y = wj_bypassed.load();
++    std::fprintf(stderr, "CREST_CUDA_WARMJACOBI_STATS calls %llu warm %llu cold %llu fallbacks %llu noconv %llu stock %llu "
++                 "failed %llu bypassed %llu hits %llu misses %llu sessions_off %llu sweeps_mean %.3f "
++                 "sweeps_max %d rq_reorders %llu rq_shift_max %.3e\n",
++                 w + c + st + x + y, w, c, wj_fallbacks.load(), wj_noconv.load(), st, x, y, wj_hits.load(),
++                 wj_misses.load(), wj_sessions_off.load(),
++                 w ? static_cast<double>(wj_sweeps.load()) / static_cast<double>(w) : 0.0, wj_sweeps_max.load(),
++                 wj_rq_reorders.load(), wj_rq_shift_max.load());
++}
++
++void warmjacobi_atexit() { warmjacobi_stats_line(); }
++
++bool warmjacobi_on() noexcept {
++    static const bool on = []() noexcept {
++        const char *v = std::getenv("CREST_CUDA_WARMJACOBI");
++        if (!v || std::strcmp(v, "1") != 0) return false;
++        std::atexit(warmjacobi_atexit);
++        std::fprintf(stderr, "CREST_CUDA_WARMJACOBI enabled tol %.1e max_sweeps %d\n", kWarmTol, kWarmMaxSweeps);
++        return true;
++    }();
++    return on;
++}
++
++// Count one call that took the switch-on path; STATS every 4096 calls (crest may end by SIGTERM) and at exit.
++void wj_finish(std::atomic<unsigned long long> &outcome) noexcept {
++    outcome.fetch_add(1, std::memory_order_relaxed);
++    const unsigned long long k = wj_calls.fetch_add(1, std::memory_order_relaxed) + 1;
++    if (k % 4096 == 0) warmjacobi_stats_line();
++}
++
++// to: "cold" (a warm attempt finished by the cold path) or "stock" (the call went to stock_solve).
++void wj_fallback_line(int device, const char *to, const char *what, int code) noexcept {
++    if (wj_fallback_lines.fetch_add(1, std::memory_order_relaxed) < 20)
++        std::fprintf(stderr, "CREST_CUDA_WARMJACOBI_FALLBACK device %d to %s stage %s code %d\n", device, to,
++                     what ? what : "?", code);
++}
++
++// A call that went to stock_solve or failed while downloading: invalidate W and V_prev; the third in a row turns the
++// session to stock.
++void wj_failure(Session &s) noexcept {
++    s.cc_valid = false;
++    s.wj_valid = false;
++    if (++s.wj_fail_run >= 3 && s.wj_ready) {
++        s.wj_ready = false;
++        wj_sessions_off.fetch_add(1, std::memory_order_relaxed);
++        std::fprintf(stderr, "CREST_CUDA_WARMJACOBI_SESSION device %d off after %d consecutive failures; stock sygvd path\n",
++                     s.device, s.wj_fail_run);
++    }
++}
++
++// Upper triangles (rows 0..j of column j) byte-identical: exactly the bytes potrf(UPPER) reads.
++bool upper_equal(int n, const double *a, const double *b) noexcept {
++    const size_t ld = static_cast<size_t>(n);
++    for (int j = 0; j < n; ++j)
++        if (std::memcmp(a + ld * j, b + ld * j, static_cast<size_t>(j + 1) * sizeof(double)) != 0) return false;
++    return true;
++}
++
++// Frees the overlap factor cache (device must be current).
++void cc_release(Session &s) noexcept {
++    crest_cuda_error r{};
++    if (s.stream) runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, r);
++    if (s.cf) runtime_ok(cudaFree(s.cf), CREST_CUDA_STAGE_DEVICE_FREE, r);
++    if (s.cones) runtime_ok(cudaFree(s.cones), CREST_CUDA_STAGE_DEVICE_FREE, r);
++    if (s.cinfo) runtime_ok(cudaFree(s.cinfo), CREST_CUDA_STAGE_DEVICE_FREE, r);
++    if (s.cwork) runtime_ok(cudaFree(s.cwork), CREST_CUDA_STAGE_DEVICE_FREE, r);
++    delete[] s.ckey;
++    s.cf = s.cones = s.cwork = s.ckey = nullptr;
++    s.cinfo = nullptr;
++    s.clwork = 0;
++    s.cc_ready = s.cc_valid = false;
++}
++
++/* Lazy per-session initialization of the factor cache (device current). The cuBLAS handle is the density handle
++ * (prepare_density). Failure frees what was made here. */
++bool cc_init(Session &s, const char *&what, int &code) noexcept {
++    s.cc_tried = true;
++    crest_cuda_error e{};
++    const int n = s.n;
++    const size_t nb = static_cast<size_t>(n) * sizeof(double);
++    int lw_potrf = 0, lw_syevd = 0;
++    double *ones = nullptr;
++    do {
++        if (!prepare_density(s, e)) { what = "init_cublas"; break; }
++        if (!runtime_ok(cudaMalloc(reinterpret_cast<void **>(&s.cf), s.matrix_bytes), CREST_CUDA_STAGE_DEVICE_ALLOC, e)) {
++            what = "init_alloc_factor";
++            break;
++        }
++        if (!runtime_ok(cudaMalloc(reinterpret_cast<void **>(&s.cones), nb), CREST_CUDA_STAGE_DEVICE_ALLOC, e)) {
++            what = "init_alloc_ones";
++            break;
++        }
++        if (!runtime_ok(cudaMalloc(reinterpret_cast<void **>(&s.cinfo), 2 * sizeof(int)), CREST_CUDA_STAGE_DEVICE_ALLOC, e)) {
++            what = "init_alloc_info";
++            break;
++        }
++        if (!solver_ok(cusolverDnDpotrf_bufferSize(s.solver, CUBLAS_FILL_MODE_UPPER, n, s.b, n, &lw_potrf),
++                       CREST_CUDA_STAGE_BUFFER_SIZE, e)) {
++            what = "init_potrf_buffer_size";
++            break;
++        }
++        if (!solver_ok(cusolverDnDsyevd_bufferSize(s.solver, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_UPPER, n, s.a, n,
++                                                   s.w, &lw_syevd), CREST_CUDA_STAGE_BUFFER_SIZE, e)) {
++            what = "init_syevd_buffer_size";
++            break;
++        }
++        const int need = lw_potrf > lw_syevd ? lw_potrf : lw_syevd;
++        if (need <= 0) {
++            record(e, CREST_CUDA_INVALID_DIMENSION, CREST_CUDA_STAGE_BUFFER_SIZE, need);
++            what = "init_workspace_size";
++            break;
++        }
++        if (need > s.lwork) {
++            if (!runtime_ok(cudaMalloc(reinterpret_cast<void **>(&s.cwork), static_cast<size_t>(need) * sizeof(double)),
++                            CREST_CUDA_STAGE_DEVICE_ALLOC, e)) {
++                what = "init_alloc_workspace";
++                break;
++            }
++            s.clwork = need;
++        }
++        ones = new (std::nothrow) double[n];
++        s.ckey = new (std::nothrow) double[static_cast<size_t>(n) * static_cast<size_t>(n)];
++        if (!ones || !s.ckey) {
++            record(e, CREST_CUDA_HOST_ALLOCATION_ERROR, CREST_CUDA_STAGE_HOST_ALLOC, 0);
++            what = "init_host_alloc";
++            break;
++        }
++        for (int i = 0; i < n; ++i) ones[i] = 1.0;
++        if (!runtime_ok(cudaMemcpyAsync(s.cones, ones, nb, cudaMemcpyHostToDevice, s.stream), CREST_CUDA_STAGE_UPLOAD_S, e)) {
++            what = "init_upload_ones";
++            break;
++        }
++        if (!runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e)) {
++            what = "init_synchronize";
++            break;
++        }
++    } while (false);
++    code = e.native_code;
++    if (e.status) cc_release(s);  // drains the stream before the host ones are freed
++    delete[] ones;
++    if (e.status) return false;
++    s.cc_ready = true;
++    return true;
++}
++
++// Frees the warm-path buffers (device must be current).
++void wj_release(Session &s) noexcept {
++    crest_cuda_error r{};
++    if (s.stream) runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, r);
++    if (s.sj) solver_ok(cusolverDnDestroySyevjInfo(s.sj), CREST_CUDA_STAGE_SOLVER_DESTROY, r);
++    s.sj = nullptr;
++    for (double **p : {&s.hp, &s.vp, &s.vt, &s.ident, &s.wjwork, &s.rq}) {
++        if (*p) runtime_ok(cudaFree(*p), CREST_CUDA_STAGE_DEVICE_FREE, r);
++        *p = nullptr;
++    }
++    delete[] s.rqh;
++    s.rqh = nullptr;
++    s.wjlwork = 0;
++    s.wj_ready = s.wj_valid = false;
++}
++
++/* Lazy per-session initialization (device current): the factor cache (cc_init), then H', V_prev, V, the identity, the
++ * Rayleigh buffers, the syevj parameters and, if syevj needs more, a workspace of its own. Failure frees what was made
++ * and leaves the session on stock. */
++bool wj_init(Session &s, const char *&what, int &code) noexcept {
++    s.wj_tried = true;
++    if (!(s.cc_tried ? s.cc_ready : cc_init(s, what, code))) {
++        if (!what) what = "init_cache";
++        return false;
++    }
++    crest_cuda_error e{};
++    const int n = s.n;
++    int lw_syevj = 0;
++    do {
++        if (n > 46340) {  // the Rayleigh dgmm treats an n x n matrix as one column of n^2 (int) entries
++            record(e, CREST_CUDA_INVALID_DIMENSION, CREST_CUDA_STAGE_ARGUMENT, n);
++            what = "init_dimension";
++            break;
++        }
++        for (double **p : {&s.hp, &s.vp, &s.vt, &s.ident})
++            if (!runtime_ok(cudaMalloc(reinterpret_cast<void **>(p), s.matrix_bytes), CREST_CUDA_STAGE_DEVICE_ALLOC, e)) break;
++        if (e.status) {
++            what = "init_alloc_warm";
++            break;
++        }
++        if (!runtime_ok(cudaMalloc(reinterpret_cast<void **>(&s.rq), 2 * static_cast<size_t>(n) * sizeof(double)),
++                        CREST_CUDA_STAGE_DEVICE_ALLOC, e)) {
++            what = "init_alloc_rayleigh";
++            break;
++        }
++        s.rqh = new (std::nothrow) double[2 * static_cast<size_t>(n)];
++        if (!s.rqh) {
++            record(e, CREST_CUDA_HOST_ALLOCATION_ERROR, CREST_CUDA_STAGE_HOST_ALLOC, 0);
++            what = "init_host_alloc_rayleigh";
++            break;
++        }
++        if (!solver_ok(cusolverDnCreateSyevjInfo(&s.sj), CREST_CUDA_STAGE_SOLVER_CREATE, e)) {
++            what = "init_syevj_info";
++            break;
++        }
++        if (!solver_ok(cusolverDnXsyevjSetTolerance(s.sj, kWarmTol), CREST_CUDA_STAGE_SOLVER_CREATE, e) ||
++            !solver_ok(cusolverDnXsyevjSetMaxSweeps(s.sj, kWarmMaxSweeps), CREST_CUDA_STAGE_SOLVER_CREATE, e) ||
++            !solver_ok(cusolverDnXsyevjSetSortEig(s.sj, 1), CREST_CUDA_STAGE_SOLVER_CREATE, e)) {
++            what = "init_syevj_params";
++            break;
++        }
++        if (!solver_ok(cusolverDnDsyevj_bufferSize(s.solver, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_UPPER, n, s.a, n,
++                                                   s.w, &lw_syevj, s.sj), CREST_CUDA_STAGE_BUFFER_SIZE, e)) {
++            what = "init_syevj_buffer_size";
++            break;
++        }
++        if (lw_syevj <= 0) {
++            record(e, CREST_CUDA_INVALID_DIMENSION, CREST_CUDA_STAGE_BUFFER_SIZE, lw_syevj);
++            what = "init_syevj_workspace_size";
++            break;
++        }
++        const int have = s.cwork ? s.clwork : s.lwork;  // >= potrf and syevd (cc_init)
++        if (lw_syevj > have) {
++            if (!runtime_ok(cudaMalloc(reinterpret_cast<void **>(&s.wjwork), static_cast<size_t>(lw_syevj) * sizeof(double)),
++                            CREST_CUDA_STAGE_DEVICE_ALLOC, e)) {
++                what = "init_alloc_workspace";
++                break;
++            }
++            s.wjlwork = lw_syevj;
++        }
++        // The identity: zero it, then copy the ones vector onto the diagonal.
++        if (!runtime_ok(cudaMemsetAsync(s.ident, 0, s.matrix_bytes, s.stream), CREST_CUDA_STAGE_SOLVE, e) ||
++            !runtime_ok(cudaMemcpy2DAsync(s.ident, static_cast<size_t>(n + 1) * sizeof(double), s.cones, sizeof(double),
++                                          sizeof(double), static_cast<size_t>(n), cudaMemcpyDeviceToDevice, s.stream),
++                        CREST_CUDA_STAGE_SOLVE, e)) {
++            what = "init_identity";
++            break;
++        }
++        if (!runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e)) {
++            what = "init_synchronize";
++            break;
++        }
++    } while (false);
++    code = e.native_code;
++    if (e.status) {
++        wj_release(s);
++        cc_release(s);
++        return false;
++    }
++    s.wj_ready = true;
++    return true;
++}
++
++// q[i] = q[i] / q[n + i] (numerator v_i^T H' v_i over v_i^T v_i) for i < n; false if a denominator is not positive or a
++// quotient is not finite (the warm attempt then goes to the cold path).
++bool rayleigh_divide(int n, double *q) noexcept {
++    for (int i = 0; i < n; ++i) {
++        const double d = q[n + i];
++        if (!(d > 0.0)) return false;
++        q[i] /= d;
++        if (!std::isfinite(q[i])) return false;
++    }
++    return true;
++}
++
++// Ascending eigenpairs after the Rayleigh refinement. Stable insertion sort that swaps w[j-1], w[j] and the matching
++// columns of C (n x n, ld n) while w[j-1] > w[j]; syevj returned them ascending by its own values, so only pairs closer
++// than the refinement shift can move (an exact permutation of the pairs). Returns the number of swaps.
++long sort_pairs(int n, double *w, double *C) noexcept {
++    const size_t ld = static_cast<size_t>(n);
++    long swaps = 0;
++    for (int i = 1; i < n; ++i)
++        for (int j = i; j > 0 && w[j - 1] > w[j]; --j) {
++            std::swap(w[j - 1], w[j]);
++            double *a = C + ld * static_cast<size_t>(j - 1), *b = C + ld * static_cast<size_t>(j);
++            for (size_t r = 0; r < ld; ++r) std::swap(a[r], b[r]);
++            ++swaps;
++        }
++    return swaps;
++}
++
++int warm_solve(Session &s, int n, double *hmat, const double *smat, double *eval) noexcept {
++    // Argument errors and sessions without a usable warm path: stock_solve (it reports argument errors).
++    if (!hmat || !smat || !eval || n <= 0 || n != s.n || (s.wj_tried && !s.wj_ready)) {
++        wj_finish(wj_bypassed);
++        return kWarmFallback;
++    }
++    crest_cuda_error e{};
++    const char *what = nullptr;
++    int code = 0;
++    int previous = -1;
++    if (!enter_device(s, previous, e)) {
++        crest_cuda_error r{};
++        restore_device(s, previous, r);
++        wj_fallback_line(s.device, "stock", "enter_device", e.native_code);
++        wj_failure(s);
++        wj_finish(wj_stock);
++        return kWarmFallback;
++    }
++    if (!s.wj_tried && !wj_init(s, what, code)) {
++        std::fprintf(stderr, "CREST_CUDA_WARMJACOBI_SESSION device %d init_failed stage %s code %d\n", s.device,
++                     what ? what : "?", code);
++        wj_sessions_off.fetch_add(1, std::memory_order_relaxed);
++        crest_cuda_error r{};
++        restore_device(s, previous, r);
++        wj_finish(wj_bypassed);
++        return kWarmFallback;
++    }
++    const size_t bytes = s.matrix_bytes;
++    const bool hit = s.cc_valid && upper_equal(n, smat, s.ckey);
++    const bool try_warm = hit && s.wj_valid;
++    double *const work = s.wjwork ? s.wjwork : (s.cwork ? s.cwork : s.work);
++    const int lwork = s.wjwork ? s.wjlwork : (s.cwork ? s.clwork : s.lwork);
++    const double one = 1.0, zero = 0.0, c15 = 1.5, cm05 = -0.5;
++    int info[2] = {0, 0};
++    int sweeps = -1;
++    bool warm = false;
++    s.wj_valid = false;  // vp is rewritten by this solve; valid again only once the solve succeeds
++    bool past = false;   // true once the caller's output arrays may have been written: no fallback from there on
++    do {
++        if (!hit) {  // a new overlap: factor S and build W = U^-1
++            s.cc_valid = false;
++            if (!copy(s, s.b, smat, bytes, cudaMemcpyHostToDevice, CREST_CUDA_STAGE_UPLOAD_S, e)) { what = "upload_s"; break; }
++            if (!solver_ok(cusolverDnDpotrf(s.solver, CUBLAS_FILL_MODE_UPPER, n, s.b, n, work, lwork, s.cinfo),
++                           CREST_CUDA_STAGE_SOLVE, e)) { what = "potrf"; break; }
++            if (!copy(s, &info[0], s.cinfo, sizeof(int), cudaMemcpyDeviceToHost, CREST_CUDA_STAGE_DOWNLOAD_INFO, e)) {
++                what = "download_potrf_info";
++                break;
++            }
++            if (!runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e)) { what = "synchronize_potrf"; break; }
++            if (info[0] != 0) { what = "potrf_info"; code = info[0]; break; }
++            if (!runtime_ok(cudaMemsetAsync(s.cf, 0, bytes, s.stream), CREST_CUDA_STAGE_SOLVE, e)) { what = "memset_factor"; break; }
++            if (!runtime_ok(cudaMemcpy2DAsync(s.cf, static_cast<size_t>(n + 1) * sizeof(double), s.cones, sizeof(double),
++                                              sizeof(double), static_cast<size_t>(n), cudaMemcpyDeviceToDevice, s.stream),
++                            CREST_CUDA_STAGE_SOLVE, e)) { what = "identity"; break; }
++            if (!blas_ok(cublasDtrsm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, n, n,
++                                     &one, s.b, n, s.cf, n), CREST_CUDA_STAGE_SOLVE, e)) { what = "trsm"; break; }
++        }
++        // H' = W^T (H W): symm reads H's upper triangle; H' stays in hp for the cold path (the warm path never writes it)
++        if (!copy(s, s.a, hmat, bytes, cudaMemcpyHostToDevice, CREST_CUDA_STAGE_UPLOAD_H, e)) { what = "upload_h"; break; }
++        if (!blas_ok(cublasDsymm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, n, n, &one, s.a, n, s.cf, n, &zero, s.b, n),
++                     CREST_CUDA_STAGE_SOLVE, e)) { what = "symm"; break; }
++        if (!blas_ok(cublasDtrmm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, n, n,
++                                 &one, s.cf, n, s.b, n, s.hp, n), CREST_CUDA_STAGE_SOLVE, e)) { what = "trmm_reduce"; break; }
++        if (try_warm) {
++            crest_cuda_error ew{};
++            const char *ww = nullptr;
++            int wcode = 0;
++            do {
++                if (!blas_ok(cublasDsymm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, n, n, &one, s.hp, n, s.vp, n,
++                                         &zero, s.b, n), CREST_CUDA_STAGE_SOLVE, ew)) { ww = "symm_rotate"; break; }
++                if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_T, CUBLAS_OP_N, n, n, n, &one, s.vp, n, s.b, n, &zero, s.a, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "gemm_rotate"; break; }
++                if (!solver_ok(cusolverDnDsyevj(s.solver, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_UPPER, n, s.a, n, s.w,
++                                                work, lwork, s.cinfo + 1, s.sj), CREST_CUDA_STAGE_SOLVE, ew)) { ww = "syevj"; break; }
++                if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, &one, s.vp, n, s.a, n, &zero, s.vt, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "gemm_vectors"; break; }
++                // V <- V (1.5 I - 0.5 V^T V), written into V_prev's buffer
++                if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_T, CUBLAS_OP_N, n, n, n, &one, s.vt, n, s.vt, n, &zero, s.a, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "gemm_gram"; break; }
++                if (!blas_ok(cublasDgeam(s.blas, CUBLAS_OP_N, CUBLAS_OP_N, n, n, &c15, s.ident, n, &cm05, s.a, n, s.b, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "geam_schulz"; break; }
++                if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, &one, s.vt, n, s.b, n, &zero, s.vp, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "gemm_schulz"; break; }
++                // Rayleigh quotients of the final V on H': X = H' V (symm, H''s upper triangle) into a; V o X and V o V
++                // (dgmm on each n x n matrix as one column of n^2 entries) into b and vt; their column sums (gemm
++                // against the ones vector) into rq[0, n) and rq[n, 2n). The division is done on the host below.
++                const int nsq = n * n;  // n <= 46340 (wj_init)
++                if (!blas_ok(cublasDsymm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, n, n, &one, s.hp, n, s.vp, n,
++                                         &zero, s.a, n), CREST_CUDA_STAGE_SOLVE, ew)) { ww = "symm_rayleigh"; break; }
++                if (!blas_ok(cublasDdgmm(s.blas, CUBLAS_SIDE_LEFT, nsq, 1, s.vp, nsq, s.a, 1, s.b, nsq), CREST_CUDA_STAGE_SOLVE, ew)) {
++                    ww = "dgmm_rayleigh";
++                    break;
++                }
++                if (!blas_ok(cublasDdgmm(s.blas, CUBLAS_SIDE_LEFT, nsq, 1, s.vp, nsq, s.vp, 1, s.vt, nsq), CREST_CUDA_STAGE_SOLVE, ew)) {
++                    ww = "dgmm_norm";
++                    break;
++                }
++                if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_T, CUBLAS_OP_N, n, 1, n, &one, s.b, n, s.cones, n, &zero, s.rq, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "gemm_rayleigh"; break; }
++                if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_T, CUBLAS_OP_N, n, 1, n, &one, s.vt, n, s.cones, n, &zero, s.rq + n, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "gemm_norm"; break; }
++                if (!blas_ok(cublasDtrmm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, n,
++                                         n, &one, s.cf, n, s.vp, n, s.b, n), CREST_CUDA_STAGE_SOLVE, ew)) { ww = "trmm_back"; break; }
++                if (!copy(s, &info[1], s.cinfo + 1, sizeof(int), cudaMemcpyDeviceToHost, CREST_CUDA_STAGE_DOWNLOAD_INFO, ew)) {
++                    ww = "download_syevj_info";
++                    break;
++                }
++                if (!copy(s, s.rqh, s.rq, 2 * static_cast<size_t>(n) * sizeof(double), cudaMemcpyDeviceToHost,
++                          CREST_CUDA_STAGE_DOWNLOAD_VALUES, ew)) {
++                    ww = "download_rayleigh";
++                    break;
++                }
++                if (!runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, ew)) { ww = "synchronize_warm"; break; }
++                if (info[1] != 0) {
++                    ww = info[1] == n + 1 ? "syevj_noconv" : "syevj_info";
++                    wcode = info[1];
++                    break;
++                }
++                if (!solver_ok(cusolverDnXsyevjGetSweeps(s.solver, s.sj, &sweeps), CREST_CUDA_STAGE_SOLVE, ew)) {
++                    ww = "syevj_sweeps";
++                    break;
++                }
++                if (!rayleigh_divide(n, s.rqh)) { ww = "rayleigh"; break; }
++                warm = true;
++            } while (false);
++            if (!warm) {
++                // Drain the warm work, then solve H' (untouched) by the cold path below within this call.
++                crest_cuda_error r{};
++                runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, r);
++                wj_fallbacks.fetch_add(1, std::memory_order_relaxed);
++                if (!ew.status && info[1] == n + 1) wj_noconv.fetch_add(1, std::memory_order_relaxed);
++                wj_fallback_line(s.device, "cold", ww, ew.status ? ew.native_code : wcode);
++                info[1] = 0;
++                sweeps = -1;
++            }
++        }
++        if (!warm) {  // cold: syevd(H') in place; its eigenvectors become V_prev; C = W V
++            if (!solver_ok(cusolverDnDsyevd(s.solver, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_UPPER, n, s.hp, n, s.w, work,
++                                            lwork, s.cinfo + 1), CREST_CUDA_STAGE_SOLVE, e)) { what = "syevd"; break; }
++            std::swap(s.hp, s.vp);
++            if (!blas_ok(cublasDtrmm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, n, n,
++                                     &one, s.cf, n, s.vp, n, s.b, n), CREST_CUDA_STAGE_SOLVE, e)) { what = "trmm_back"; break; }
++            if (!copy(s, &info[1], s.cinfo + 1, sizeof(int), cudaMemcpyDeviceToHost, CREST_CUDA_STAGE_DOWNLOAD_INFO, e)) {
++                what = "download_syevd_info";
++                break;
++            }
++            if (!runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e)) { what = "synchronize"; break; }
++            if (info[1] != 0) { what = "syevd_info"; code = info[1]; break; }
++        }
++        past = true;
++        if (!copy(s, hmat, s.b, bytes, cudaMemcpyDeviceToHost, CREST_CUDA_STAGE_DOWNLOAD_VECTORS, e)) break;
++        if (!copy(s, eval, s.w, static_cast<size_t>(n) * sizeof(double),
++                  cudaMemcpyDeviceToHost, CREST_CUDA_STAGE_DOWNLOAD_VALUES, e)) break;
++        runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e);
++    } while (false);
++    if (!past) {
++        // Drain (queued work may still read the caller's arrays), then stock_solve with a fresh error.
++        crest_cuda_error r{};
++        runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, r);
++        restore_device(s, previous, r);
++        if (e.status) code = e.native_code;
++        wj_fallback_line(s.device, "stock", what, code);
++        wj_failure(s);
++        wj_finish(wj_stock);
++        return kWarmFallback;
++    }
++    // Output stage: the caller's arrays may be partly written, so a failure is returned with the stock stage codes.
++    if (e.status)
++        runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e);
++    restore_device(s, previous, e);
++    if (e.status) {
++        ++s.stats.failed_solves;
++        wj_failure(s);
++    } else {
++        if (!hit) {
++            std::memcpy(s.ckey, smat, bytes);
++            s.cc_valid = true;
++        }
++        s.wj_valid = true;
++        s.wj_fail_run = 0;
++        ++s.stats.successful_solves;
++        (hit ? wj_hits : wj_misses).fetch_add(1, std::memory_order_relaxed);
++        if (warm) {
++            // eval holds syevj's eigenvalues (downloaded above): return the Rayleigh quotients rqh[0, n) instead, then
++            // order the pairs (w_i, column i of hmat) ascending. V_prev keeps syevj's column order (the next warm start
++            // does not depend on it).
++            double shift = 0.0;
++            for (int i = 0; i < n; ++i) {
++                const double d = std::fabs(s.rqh[i] - eval[i]);
++                if (d > shift) shift = d;
++            }
++            std::memcpy(eval, s.rqh, static_cast<size_t>(n) * sizeof(double));
++            if (sort_pairs(n, eval, hmat) > 0) wj_rq_reorders.fetch_add(1, std::memory_order_relaxed);
++            double prevd = wj_rq_shift_max.load(std::memory_order_relaxed);
++            while (shift > prevd && !wj_rq_shift_max.compare_exchange_weak(prevd, shift, std::memory_order_relaxed)) {
++            }
++            wj_sweeps.fetch_add(static_cast<unsigned long long>(sweeps > 0 ? sweeps : 0), std::memory_order_relaxed);
++            int prev = wj_sweeps_max.load(std::memory_order_relaxed);
++            while (sweeps > prev && !wj_sweeps_max.compare_exchange_weak(prev, sweeps, std::memory_order_relaxed)) {
++            }
++        }
++    }
++    s.error = e;
++    wj_finish(e.status ? wj_failed : (warm ? wj_warm : wj_cold));
++    return kWarmDone;
++}
++
++}  // namespace
++
++extern "C" int crest_cuda_solve(void *handle, int n, double *hmat,
++                                 const double *smat, double *eval) noexcept {
++    if (!handle) return CREST_CUDA_INVALID_ARGUMENT;
++    Session &s = *static_cast<Session *>(handle);
++    if (warmjacobi_on() && warm_solve(s, n, hmat, smat, eval) == kWarmDone) return s.error.status;
++    return stock_solve(s, n, hmat, smat, eval);
 +}
 +
 +extern "C" int crest_cuda_density(void *handle, int n, const double *coeff,

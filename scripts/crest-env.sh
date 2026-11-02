@@ -1,6 +1,7 @@
 # crest-env.sh: runtime settings for the FastCREST build. Source it before running crest:
 #   source scripts/crest-env.sh            # tuned threads only (no GPU switches)
 #   source scripts/crest-env.sh gpu        # also switch on the GPU three-body term and the CPU solver for optimizations
+#   source scripts/crest-env.sh fast       # gpu, plus the opt-in GPU-resident SCC and warm-started Jacobi eigensolver
 #
 # The thread settings do not change the arithmetic of a single-threaded run; with more threads, results differ from run
 # to run only through reduction order, as for any multithreaded CREST run. In gpu mode, CREST_ATM_GPU=1 swaps in the GPU
@@ -21,11 +22,32 @@ export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 ulimit -s unlimited 2>/dev/null || true
 
-if [[ ${1:-} == gpu ]]; then
+# Optional: LLVM's OpenMP runtime (libomp) instead of the GNU one. CREST runs the parallel loops of each trajectory in
+# a nested OpenMP team; the GNU runtime starts the threads of a nested team for every parallel region, LLVM's keeps
+# them alive between regions (hot teams). Set CREST_LIBOMP_DIR to a directory whose libgomp.so.1 is LLVM's libomp
+# (LLVM installs that alias next to libomp.so); the binary is unchanged. See README, "Thread runtime and placement".
+if [[ -n ${CREST_LIBOMP_DIR:-} ]]; then
+  if [[ -e $CREST_LIBOMP_DIR/libgomp.so.1 ]]; then
+    export LD_LIBRARY_PATH=$CREST_LIBOMP_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+    export KMP_HOT_TEAMS_MAX_LEVEL=2 KMP_HOT_TEAMS_MODE=1
+  else
+    echo "crest-env.sh: $CREST_LIBOMP_DIR has no libgomp.so.1; keeping the GNU OpenMP runtime" >&2
+  fi
+fi
+
+if [[ ${1:-} == gpu || ${1:-} == fast ]]; then
   # D4 three-body (ATM) term on the GPU during MTD and MD; optimization passes always use the CPU routine.
   export CREST_ATM_GPU=1
   # The CUDA eigensolver is selected per calculation level with tblite_solver = "cuda" in the TOML input. This keeps
   # every optimization pass on the CPU solver: faster there (32 concurrent optimizations ran at 0.87-0.89x on one GPU)
   # and checkable bit for bit against distributed workers.
   export CREST_OPT_SOLVER=cpu
+fi
+
+if [[ ${1:-} == fast ]]; then
+  # Opt-in settings (the fastest mode; tested on A100 GPUs). The SCC iterations stay on the GPU (CREST_CUDA_DEVSCC), and
+  # the eigensolver starts from the previous eigenvectors (CREST_CUDA_WARMJACOBI). Energies and gradients agree with
+  # the standard GPU route to about 2e-13 Eh in our tests, but not bit for bit (docs/HOW_IT_WORKS.md).
+  export CREST_CUDA_DEVSCC=1
+  export CREST_CUDA_WARMJACOBI=1
 fi

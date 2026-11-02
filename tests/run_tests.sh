@@ -15,6 +15,9 @@
 #   3 sp_gpu    single point with tblite_solver = "cuda" and CREST_ATM_GPU=1: must match test 1 to 1e-8 Eh, 1e-6 Eh/bohr
 #   3b sp_jacobi  the same with CREST_CUDA_WARMJACOBI=1 (opt-in): must match test 1 likewise, with warm Jacobi solves
 #               and no fallback to the standard solver
+#   3c sp_devscc  the same as 3 with CREST_CUDA_DEVSCC=1 (opt-in GPU-resident SCC): must match test 1 likewise, with the
+#               SCC iterations run on the device
+#   3d sp_fast    both opt-in settings together (the fastest mode): must match test 1 likewise
 #   4 search    --quick iMTD-GC search on one machine with the GPU route and checkpoints: must end normally
 #   5 dist      the same search with CREST_DIST_OLOOP (optimization passes as Slurm array jobs)
 set -uo pipefail
@@ -110,6 +113,34 @@ if [[ $GPU == 1 ]]; then
     fi
   else
     bad "3b sp_jacobi: no result (see $WORK/sp_jacobi/crest.err)"
+  fi
+
+  # opt-in GPU-resident SCC: the Hamiltonian, the eigensolve, the density and the charge and multipole sums of every
+  # SCC iteration stay on the GPU; STATS must count device evaluations and iterations (0 means the path declined)
+  if sp sp_devscc "$CREST" cuda CREST_ATM_GPU=1 CREST_CUDA_DEVSCC=1; then
+    stats=$(grep -h 'CREST_CUDA_DEVSCC_STATS' "$WORK/sp_devscc/crest.err" | tail -1)
+    r=$(python3 "$HERE/compare_engrad.py" "$WORK/sp_devscc/crest.engrad" "$WORK/sp_cpu/crest.engrad" 1e-8 1e-6); rc=$?
+    if [[ $rc == 0 && $stats =~ \ evaluations\ [1-9][0-9]*\ steps\ [1-9] ]]; then
+      ok "3c sp_devscc: $r; ${stats#CREST_CUDA_DEVSCC_STATS }"
+    else
+      bad "3c sp_devscc: $r; ${stats:-no STATS line}"
+    fi
+  else
+    bad "3c sp_devscc: no result (see $WORK/sp_devscc/crest.err)"
+  fi
+
+  # both opt-in settings (the fastest mode): device SCC with the warm Jacobi solves on the device-resident Hamiltonian
+  if sp sp_fast "$CREST" cuda CREST_ATM_GPU=1 CREST_CUDA_DEVSCC=1 CREST_CUDA_WARMJACOBI=1; then
+    stats=$(grep -h 'CREST_CUDA_DEVSCC_STATS' "$WORK/sp_fast/crest.err" | tail -1)
+    wj=$(grep -h 'CREST_CUDA_WARMJACOBI_STATS' "$WORK/sp_fast/crest.err" | tail -1)
+    r=$(python3 "$HERE/compare_engrad.py" "$WORK/sp_fast/crest.engrad" "$WORK/sp_cpu/crest.engrad" 1e-8 1e-6); rc=$?
+    if [[ $rc == 0 && $stats =~ \ evaluations\ [1-9] && $wj =~ \ warm\ [1-9] && $wj =~ \ stock\ 0\ failed\ 0\  ]]; then
+      ok "3d sp_fast: $r; ${stats#CREST_CUDA_DEVSCC_STATS }; $(cut -d ' ' -f 2-7 <<< "$wj")"
+    else
+      bad "3d sp_fast: $r; ${stats:-no DEVSCC STATS line}; ${wj:-no WARMJACOBI STATS line}"
+    fi
+  else
+    bad "3d sp_fast: no result (see $WORK/sp_fast/crest.err)"
   fi
 
   search() {  # search <dir> [env...]

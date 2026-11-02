@@ -60,7 +60,7 @@ diff -ruN a/CMakeLists.txt b/CMakeLists.txt
  install(
    EXPORT
    "${PROJECT_NAME}-targets"
-@@ -361,4 +385,60 @@
+@@ -361,4 +385,76 @@
  if (WITH_TESTS)
    enable_testing()
    add_subdirectory("test")
@@ -120,6 +120,22 @@ diff -ruN a/CMakeLists.txt b/CMakeLists.txt
 +    VERBATIM)
 +  set_source_files_properties("${_atm_obj}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 +  target_sources(crest-cuda-bridge PRIVATE "${_atm_obj}")
++endif()
++
++# Device SCC kernels (opt-in CREST_CUDA_DEVSCC=1), compiled like the GPU ATM kernel above.
++if(WITH_TBLITE_GPU)
++  set(_scc_src "${PROJECT_SOURCE_DIR}/src/calculator/cuda/crest_cuda_scc.cu")
++  set(_scc_obj "${CMAKE_CURRENT_BINARY_DIR}/crest_cuda_scc.o")
++  add_custom_command(
++    OUTPUT "${_scc_obj}"
++    COMMAND "${CUDAToolkit_NVCC_EXECUTABLE}" -O3 -std=c++14 --fmad=false -Xcompiler -fPIC -Xcompiler -ffp-contract=off
++            -ccbin "${CMAKE_CXX_COMPILER}" ${CREST_ATM_CUDA_GENCODE}
++            -I "${PROJECT_SOURCE_DIR}/src/calculator/cuda" -c "${_scc_src}" -o "${_scc_obj}"
++    DEPENDS "${_scc_src}" "${PROJECT_SOURCE_DIR}/src/calculator/cuda/crest_cuda_scc.h"
++    COMMENT "nvcc: device SCC kernels"
++    VERBATIM)
++  set_source_files_properties("${_scc_obj}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
++  target_sources(crest-cuda-bridge PRIVATE "${_scc_obj}")
  endif()
 diff -ruN a/config/CMakeLists.txt b/config/CMakeLists.txt
 --- a/config/CMakeLists.txt
@@ -4322,9 +4338,10 @@ diff -ruN a/src/calculator/calculator.F90 b/src/calculator/calculator.F90
 diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/crest_cuda_bridge.cpp
 --- a/src/calculator/cuda/crest_cuda_bridge.cpp
 +++ b/src/calculator/cuda/crest_cuda_bridge.cpp
-@@ -0,0 +1,1275 @@
+@@ -0,0 +1,1808 @@
 +// SPDX-License-Identifier: LGPL-3.0-or-later
 +#include "crest_cuda_bridge.h"
++#include "crest_cuda_scc.h"
 +
 +#include <cuda_runtime_api.h>
 +#include <cusolverDn.h>
@@ -4383,6 +4400,15 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +    int wj_fail_run = 0;       // consecutive solves that went to stock_solve or failed
 +    double *rq = nullptr;      // device: 2n, Rayleigh numerators v_i^T H' v_i, then denominators v_i^T v_i
 +    double *rqh = nullptr;     // host: 2n, rq downloaded; [0, n) then holds the quotients (the returned eigenvalues)
++    // CREST_CUDA_DEVSCC=1 only: the integrals of the current evaluation and the SCC buffers on the device.
++    double *dh0 = nullptr, *ds = nullptr;    // n x n: H0, S
++    double *ddp = nullptr, *dqp = nullptr;   // (3|6, n, n): dipole and quadrupole integrals
++    double *dvao = nullptr, *dvdp = nullptr, *dvqp = nullptr;  // potential shifts of the current iteration
++    double *dred = nullptr;                  // n x 11 per-orbital reductions
++    int *dat = nullptr;                      // atom of each orbital, 0-based
++    int scc_nat = 0;
++    bool scc_ready = false;                  // integrals of the current evaluation are on the device
++    double *ccur = nullptr;                  // a or b: eigenvectors of the last device solve
 +};
 +
 +void record(crest_cuda_error &e, int status, int stage, int native) noexcept {
@@ -4450,6 +4476,9 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +    if (s.wjwork) runtime_ok(cudaFree(s.wjwork), CREST_CUDA_STAGE_DEVICE_FREE, e);
 +    if (s.rq) runtime_ok(cudaFree(s.rq), CREST_CUDA_STAGE_DEVICE_FREE, e);
 +    delete[] s.rqh;
++    for (double *p : {s.dh0, s.ds, s.ddp, s.dqp, s.dvao, s.dvdp, s.dvqp, s.dred})
++        if (p) runtime_ok(cudaFree(p), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    if (s.dat) runtime_ok(cudaFree(s.dat), CREST_CUDA_STAGE_DEVICE_FREE, e);
 +    if (s.stream)
 +        runtime_ok(cudaStreamDestroy(s.stream), CREST_CUDA_STAGE_STREAM_DESTROY, e);
 +}
@@ -5202,6 +5231,488 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +    return stock_solve(s, n, hmat, smat, eval);
 +}
 +
++
++/* Opt-in GPU-resident SCC iteration: CREST_CUDA_DEVSCC=1 (read once per process; unset or any other value: the calls
++ * below are refused and tblite keeps its host path). scc_begin stores the integrals of one energy and gradient
++ * evaluation on the session's device (H0, S, dipole and quadrupole integrals, orbital-to-atom map). Each SCC iteration
++ * then needs two calls: scc_step builds H from the orbital, dipole and quadrupole potential shifts on the device
++ * (crest_scc_build_h, tblite's add_pot_to_h1), solves H C = S C e with sygvd on the device copy of S and returns only
++ * the eigenvalues; scc_density forms P = C diag(f) C^T from the occupations f and returns per orbital the Mulliken
++ * population, dipole and quadrupole moments and the band energy (crest_scc_reduce). scc_end copies the eigenvectors
++ * and the density of the last iteration to the host for the gradient. The eigenvectors and the density never cross
++ * the bus inside the SCC loop. Not bitwise equal to the host path (the sums over orbitals run in another order). With
++ * CREST_CUDA_WARMJACOBI=1 as well, scc_step solves by warm_solve_dev (the warm path on the device-resident H; the
++ * first solve of every evaluation refactorizes S) and falls back to sygvd on the rebuilt H. */
++namespace {
++
++std::atomic<unsigned long long> scc_begins{0};
++std::atomic<unsigned long long> scc_steps{0};
++
++void devscc_atexit() {
++    std::fprintf(stderr, "CREST_CUDA_DEVSCC_STATS evaluations %llu steps %llu\n", scc_begins.load(), scc_steps.load());
++}
++
++bool devscc_on() noexcept {
++    static const bool on = []() noexcept {
++        const char *v = std::getenv("CREST_CUDA_DEVSCC");
++        if (!v || std::strcmp(v, "1") != 0) return false;
++        std::atexit(devscc_atexit);
++        std::fprintf(stderr, "CREST_CUDA_DEVSCC enabled\n");
++        return true;
++    }();
++    return on;
++}
++
++// Once per process: the kernels must have code for this GPU (the build's -gencode list). Otherwise the device path
++// declines and the SCC stays on the host, as the GPU three-body term falls back to the CPU.
++bool devscc_kernels_ok() noexcept {
++    static const bool ok = []() noexcept {
++        const int e = crest_scc_kernels_check();
++        if (e != 0)
++            std::fprintf(stderr, "CREST_CUDA_DEVSCC: no kernel code for this GPU (CUDA error %d: %s); the SCC stays on "
++                                 "the host. Rebuild with build.sh --gencode for this GPU to use it.\n",
++                         e, cudaGetErrorString(static_cast<cudaError_t>(e)));
++        return e == 0;
++    }();
++    return ok;
++}
++
++void scc_release(Session &s, crest_cuda_error &e) noexcept {
++    for (double **p : {&s.dh0, &s.ds, &s.ddp, &s.dqp, &s.dvao, &s.dvdp, &s.dvqp, &s.dred}) {
++        if (*p) runtime_ok(cudaFree(*p), CREST_CUDA_STAGE_DEVICE_FREE, e);
++        *p = nullptr;
++    }
++    if (s.dat) runtime_ok(cudaFree(s.dat), CREST_CUDA_STAGE_DEVICE_FREE, e);
++    s.dat = nullptr;
++    s.scc_nat = 0;
++    s.scc_ready = false;
++    s.ccur = nullptr;
++}
++
++// Allocate the device buffers for nat atoms (device current); on failure everything made here is freed.
++bool scc_alloc(Session &s, int nat, crest_cuda_error &e) noexcept {
++    if (s.dh0 && s.scc_nat == nat) return true;
++    scc_release(s, e);
++    const size_t nb = s.matrix_bytes, n = static_cast<size_t>(s.n), na = static_cast<size_t>(nat);
++    const std::pair<double **, size_t> bufs[] = {{&s.dh0, nb},          {&s.ds, nb},
++                                                 {&s.ddp, 3 * nb},       {&s.dqp, 6 * nb},
++                                                 {&s.dvao, n * sizeof(double)}, {&s.dvdp, 3 * na * sizeof(double)},
++                                                 {&s.dvqp, 6 * na * sizeof(double)},
++                                                 {&s.dred, CREST_SCC_NRED * n * sizeof(double)}};
++    for (const auto &b : bufs)
++        if (!runtime_ok(cudaMalloc(reinterpret_cast<void **>(b.first), b.second), CREST_CUDA_STAGE_DEVICE_ALLOC, e)) {
++            scc_release(s, e);
++            return false;
++        }
++    if (!runtime_ok(cudaMalloc(reinterpret_cast<void **>(&s.dat), n * sizeof(int)), CREST_CUDA_STAGE_DEVICE_ALLOC, e)) {
++        scc_release(s, e);
++        return false;
++    }
++    s.scc_nat = nat;
++    return true;
++}
++
++// Warm-started Jacobi on the device-resident Hamiltonian (CREST_CUDA_DEVSCC=1 together with CREST_CUDA_WARMJACOBI=1):
++// warm_solve with H already built in s.a, the overlap taken from s.ds (scc_begin clears s.cc_valid, so the first solve
++// of every evaluation factorizes its S) and the eigenvectors left on the device in s.b. Called with the device
++// current. Returns kWarmFallback when nothing usable was produced (the caller rebuilds H and runs sygvd).
++int warm_solve_dev(Session &s, int n, double *eval) noexcept {
++    if (s.wj_tried && !s.wj_ready) {
++        wj_finish(wj_bypassed);
++        return kWarmFallback;
++    }
++    crest_cuda_error e{};
++    const char *what = nullptr;
++    int code = 0;
++    if (!s.wj_tried && !wj_init(s, what, code)) {
++        std::fprintf(stderr, "CREST_CUDA_WARMJACOBI_SESSION device %d init_failed stage %s code %d\n", s.device,
++                     what ? what : "?", code);
++        wj_sessions_off.fetch_add(1, std::memory_order_relaxed);
++        wj_finish(wj_bypassed);
++        return kWarmFallback;
++    }
++    const size_t bytes = s.matrix_bytes;
++    const bool hit = s.cc_valid;
++    const bool try_warm = hit && s.wj_valid;
++    double *const work = s.wjwork ? s.wjwork : (s.cwork ? s.cwork : s.work);
++    const int lwork = s.wjwork ? s.wjlwork : (s.cwork ? s.clwork : s.lwork);
++    const double one = 1.0, zero = 0.0, c15 = 1.5, cm05 = -0.5;
++    int info[2] = {0, 0};
++    int sweeps = -1;
++    bool warm = false;
++    s.wj_valid = false;
++    bool past = false;
++    do {
++        if (!hit) {  // the first solve of an evaluation: factor S and build W = U^-1
++            s.cc_valid = false;
++            if (!runtime_ok(cudaMemcpyAsync(s.b, s.ds, bytes, cudaMemcpyDeviceToDevice, s.stream), CREST_CUDA_STAGE_SOLVE, e)) {
++                what = "copy_s";
++                break;
++            }
++            if (!solver_ok(cusolverDnDpotrf(s.solver, CUBLAS_FILL_MODE_UPPER, n, s.b, n, work, lwork, s.cinfo),
++                           CREST_CUDA_STAGE_SOLVE, e)) { what = "potrf"; break; }
++            if (!copy(s, &info[0], s.cinfo, sizeof(int), cudaMemcpyDeviceToHost, CREST_CUDA_STAGE_DOWNLOAD_INFO, e)) {
++                what = "download_potrf_info";
++                break;
++            }
++            if (!runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e)) { what = "synchronize_potrf"; break; }
++            if (info[0] != 0) { what = "potrf_info"; code = info[0]; break; }
++            if (!runtime_ok(cudaMemsetAsync(s.cf, 0, bytes, s.stream), CREST_CUDA_STAGE_SOLVE, e)) { what = "memset_factor"; break; }
++            if (!runtime_ok(cudaMemcpy2DAsync(s.cf, static_cast<size_t>(n + 1) * sizeof(double), s.cones, sizeof(double),
++                                              sizeof(double), static_cast<size_t>(n), cudaMemcpyDeviceToDevice, s.stream),
++                            CREST_CUDA_STAGE_SOLVE, e)) { what = "identity"; break; }
++            if (!blas_ok(cublasDtrsm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, n, n,
++                                     &one, s.b, n, s.cf, n), CREST_CUDA_STAGE_SOLVE, e)) { what = "trsm"; break; }
++        }
++        // H' = W^T (H W) with H in s.a (built on the device)
++        if (!blas_ok(cublasDsymm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, n, n, &one, s.a, n, s.cf, n, &zero, s.b, n),
++                     CREST_CUDA_STAGE_SOLVE, e)) { what = "symm"; break; }
++        if (!blas_ok(cublasDtrmm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, n, n,
++                                 &one, s.cf, n, s.b, n, s.hp, n), CREST_CUDA_STAGE_SOLVE, e)) { what = "trmm_reduce"; break; }
++        if (try_warm) {
++            crest_cuda_error ew{};
++            const char *ww = nullptr;
++            int wcode = 0;
++            do {
++                if (!blas_ok(cublasDsymm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, n, n, &one, s.hp, n, s.vp, n,
++                                         &zero, s.b, n), CREST_CUDA_STAGE_SOLVE, ew)) { ww = "symm_rotate"; break; }
++                if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_T, CUBLAS_OP_N, n, n, n, &one, s.vp, n, s.b, n, &zero, s.a, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "gemm_rotate"; break; }
++                if (!solver_ok(cusolverDnDsyevj(s.solver, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_UPPER, n, s.a, n, s.w,
++                                                work, lwork, s.cinfo + 1, s.sj), CREST_CUDA_STAGE_SOLVE, ew)) { ww = "syevj"; break; }
++                if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, &one, s.vp, n, s.a, n, &zero, s.vt, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "gemm_vectors"; break; }
++                if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_T, CUBLAS_OP_N, n, n, n, &one, s.vt, n, s.vt, n, &zero, s.a, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "gemm_gram"; break; }
++                if (!blas_ok(cublasDgeam(s.blas, CUBLAS_OP_N, CUBLAS_OP_N, n, n, &c15, s.ident, n, &cm05, s.a, n, s.b, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "geam_schulz"; break; }
++                if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, &one, s.vt, n, s.b, n, &zero, s.vp, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "gemm_schulz"; break; }
++                const int nsq = n * n;
++                if (!blas_ok(cublasDsymm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, n, n, &one, s.hp, n, s.vp, n,
++                                         &zero, s.a, n), CREST_CUDA_STAGE_SOLVE, ew)) { ww = "symm_rayleigh"; break; }
++                if (!blas_ok(cublasDdgmm(s.blas, CUBLAS_SIDE_LEFT, nsq, 1, s.vp, nsq, s.a, 1, s.b, nsq), CREST_CUDA_STAGE_SOLVE, ew)) {
++                    ww = "dgmm_rayleigh";
++                    break;
++                }
++                if (!blas_ok(cublasDdgmm(s.blas, CUBLAS_SIDE_LEFT, nsq, 1, s.vp, nsq, s.vp, 1, s.vt, nsq), CREST_CUDA_STAGE_SOLVE, ew)) {
++                    ww = "dgmm_norm";
++                    break;
++                }
++                if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_T, CUBLAS_OP_N, n, 1, n, &one, s.b, n, s.cones, n, &zero, s.rq, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "gemm_rayleigh"; break; }
++                if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_T, CUBLAS_OP_N, n, 1, n, &one, s.vt, n, s.cones, n, &zero, s.rq + n, n),
++                             CREST_CUDA_STAGE_SOLVE, ew)) { ww = "gemm_norm"; break; }
++                if (!blas_ok(cublasDtrmm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, n,
++                                         n, &one, s.cf, n, s.vp, n, s.b, n), CREST_CUDA_STAGE_SOLVE, ew)) { ww = "trmm_back"; break; }
++                if (!copy(s, &info[1], s.cinfo + 1, sizeof(int), cudaMemcpyDeviceToHost, CREST_CUDA_STAGE_DOWNLOAD_INFO, ew)) {
++                    ww = "download_syevj_info";
++                    break;
++                }
++                if (!copy(s, s.rqh, s.rq, 2 * static_cast<size_t>(n) * sizeof(double), cudaMemcpyDeviceToHost,
++                          CREST_CUDA_STAGE_DOWNLOAD_VALUES, ew)) {
++                    ww = "download_rayleigh";
++                    break;
++                }
++                if (!runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, ew)) { ww = "synchronize_warm"; break; }
++                if (info[1] != 0) {
++                    ww = info[1] == n + 1 ? "syevj_noconv" : "syevj_info";
++                    wcode = info[1];
++                    break;
++                }
++                if (!solver_ok(cusolverDnXsyevjGetSweeps(s.solver, s.sj, &sweeps), CREST_CUDA_STAGE_SOLVE, ew)) {
++                    ww = "syevj_sweeps";
++                    break;
++                }
++                if (!rayleigh_divide(n, s.rqh)) { ww = "rayleigh"; break; }
++                warm = true;
++            } while (false);
++            if (!warm) {
++                crest_cuda_error r{};
++                runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, r);
++                wj_fallbacks.fetch_add(1, std::memory_order_relaxed);
++                if (!ew.status && info[1] == n + 1) wj_noconv.fetch_add(1, std::memory_order_relaxed);
++                wj_fallback_line(s.device, "cold", ww, ew.status ? ew.native_code : wcode);
++                info[1] = 0;
++                sweeps = -1;
++            }
++        }
++        if (!warm) {  // cold: syevd(H') in place; its eigenvectors become V_prev; C = W V
++            if (!solver_ok(cusolverDnDsyevd(s.solver, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_UPPER, n, s.hp, n, s.w, work,
++                                            lwork, s.cinfo + 1), CREST_CUDA_STAGE_SOLVE, e)) { what = "syevd"; break; }
++            std::swap(s.hp, s.vp);
++            if (!blas_ok(cublasDtrmm(s.blas, CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, n, n,
++                                     &one, s.cf, n, s.vp, n, s.b, n), CREST_CUDA_STAGE_SOLVE, e)) { what = "trmm_back"; break; }
++            if (!copy(s, &info[1], s.cinfo + 1, sizeof(int), cudaMemcpyDeviceToHost, CREST_CUDA_STAGE_DOWNLOAD_INFO, e)) {
++                what = "download_syevd_info";
++                break;
++            }
++            if (!runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e)) { what = "synchronize"; break; }
++            if (info[1] != 0) { what = "syevd_info"; code = info[1]; break; }
++        }
++        past = true;
++        if (!copy(s, eval, s.w, static_cast<size_t>(n) * sizeof(double), cudaMemcpyDeviceToHost,
++                  CREST_CUDA_STAGE_DOWNLOAD_VALUES, e)) break;
++        runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e);
++    } while (false);
++    if (!past) {
++        crest_cuda_error r{};
++        runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, r);
++        if (e.status) code = e.native_code;
++        wj_fallback_line(s.device, "stock", what, code);
++        wj_failure(s);
++        wj_finish(wj_stock);
++        return kWarmFallback;
++    }
++    if (e.status) {
++        ++s.stats.failed_solves;
++        wj_failure(s);
++    } else {
++        if (!hit) s.cc_valid = true;
++        s.wj_valid = true;
++        s.wj_fail_run = 0;
++        ++s.stats.successful_solves;
++        (hit ? wj_hits : wj_misses).fetch_add(1, std::memory_order_relaxed);
++        s.ccur = s.b;
++        if (warm) {
++            double shift = 0.0;
++            bool ascending = true;
++            for (int i = 0; i < n; ++i) {
++                const double d = std::fabs(s.rqh[i] - eval[i]);
++                if (d > shift) shift = d;
++                if (i > 0 && s.rqh[i - 1] > s.rqh[i]) ascending = false;
++            }
++            std::memcpy(eval, s.rqh, static_cast<size_t>(n) * sizeof(double));
++            if (!ascending) {
++                // rare: the Rayleigh quotients reorder close pairs; permute the device eigenvectors through the host
++                double *c = new (std::nothrow) double[bytes / sizeof(double)];
++                crest_cuda_error r{};
++                if (!c || !copy(s, c, s.b, bytes, cudaMemcpyDeviceToHost, CREST_CUDA_STAGE_DOWNLOAD_VECTORS, r) ||
++                    !runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, r)) {
++                    record(e, r.status ? r.status : CREST_CUDA_HOST_ALLOCATION_ERROR, CREST_CUDA_STAGE_DOWNLOAD_VECTORS, 0);
++                } else {
++                    if (sort_pairs(n, eval, c) > 0) wj_rq_reorders.fetch_add(1, std::memory_order_relaxed);
++                    if (!copy(s, s.b, c, bytes, cudaMemcpyHostToDevice, CREST_CUDA_STAGE_UPLOAD_H, r) ||
++                        !runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, r))
++                        record(e, r.status, CREST_CUDA_STAGE_UPLOAD_H, r.native_code);
++                }
++                delete[] c;
++            }
++            double prevd = wj_rq_shift_max.load(std::memory_order_relaxed);
++            while (shift > prevd && !wj_rq_shift_max.compare_exchange_weak(prevd, shift, std::memory_order_relaxed)) {
++            }
++            wj_sweeps.fetch_add(static_cast<unsigned long long>(sweeps > 0 ? sweeps : 0), std::memory_order_relaxed);
++            int prev = wj_sweeps_max.load(std::memory_order_relaxed);
++            while (sweeps > prev && !wj_sweeps_max.compare_exchange_weak(prev, sweeps, std::memory_order_relaxed)) {
++            }
++        }
++        if (e.status) {
++            ++s.stats.failed_solves;
++            wj_failure(s);
++            s.ccur = nullptr;
++        }
++    }
++    s.error = e;
++    wj_finish(e.status ? wj_failed : (warm ? wj_warm : wj_cold));
++    return kWarmDone;
++}
++
++}  // namespace
++
++extern "C" int crest_cuda_scc_available(void) noexcept {
++    return devscc_on() && devscc_kernels_ok() ? 1 : 0;
++}
++
++extern "C" int crest_cuda_scc_begin(void *handle, int n, int nat, const double *h0, const double *smat,
++                                    const double *dpint, const double *qpint, const int *ao2at) noexcept {
++    if (!handle) return CREST_CUDA_INVALID_ARGUMENT;
++    Session &s = *static_cast<Session *>(handle);
++    crest_cuda_error e{};
++    s.scc_ready = false;
++    s.ccur = nullptr;
++    s.cc_valid = false;  // a new overlap: the warm path refactorizes it and starts cold
++    s.wj_valid = false;
++    if (!crest_cuda_scc_available() || !h0 || !smat || !dpint || !qpint || !ao2at || nat <= 0) {
++        record(e, CREST_CUDA_INVALID_ARGUMENT, CREST_CUDA_STAGE_ARGUMENT, 0);
++    } else if (n <= 0 || n != s.n) {
++        record(e, CREST_CUDA_INVALID_DIMENSION, CREST_CUDA_STAGE_ARGUMENT, n);
++    }
++    int previous = -1;
++    bool entered = false;
++    int *at0 = nullptr;
++    if (!e.status) entered = enter_device(s, previous, e);
++    if (entered) {
++        do {
++            if (!prepare_density(s, e)) break;
++            if (!scc_alloc(s, nat, e)) break;
++            at0 = new (std::nothrow) int[n];
++            if (!at0) {
++                record(e, CREST_CUDA_HOST_ALLOCATION_ERROR, CREST_CUDA_STAGE_HOST_ALLOC, 0);
++                break;
++            }
++            bool bad = false;
++            for (int i = 0; i < n; ++i) {
++                at0[i] = ao2at[i] - 1;  // tblite's map is 1-based
++                if (at0[i] < 0 || at0[i] >= nat) bad = true;
++            }
++            if (bad) {
++                record(e, CREST_CUDA_INVALID_ARGUMENT, CREST_CUDA_STAGE_ARGUMENT, 0);
++                break;
++            }
++            if (!copy(s, s.dh0, h0, s.matrix_bytes, cudaMemcpyHostToDevice, CREST_CUDA_STAGE_UPLOAD_H, e)) break;
++            if (!copy(s, s.ds, smat, s.matrix_bytes, cudaMemcpyHostToDevice, CREST_CUDA_STAGE_UPLOAD_S, e)) break;
++            if (!copy(s, s.ddp, dpint, 3 * s.matrix_bytes, cudaMemcpyHostToDevice, CREST_CUDA_STAGE_UPLOAD_S, e)) break;
++            if (!copy(s, s.dqp, qpint, 6 * s.matrix_bytes, cudaMemcpyHostToDevice, CREST_CUDA_STAGE_UPLOAD_S, e)) break;
++            if (!copy(s, s.dat, at0, static_cast<size_t>(n) * sizeof(int), cudaMemcpyHostToDevice,
++                      CREST_CUDA_STAGE_UPLOAD_S, e)) break;
++            runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e);
++        } while (false);
++        if (e.status)
++            runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e);
++    }
++    delete[] at0;
++    restore_device(s, previous, e);
++    s.scc_ready = !e.status;
++    if (!e.status) scc_begins.fetch_add(1, std::memory_order_relaxed);
++    s.error = e;
++    return e.status;
++}
++
++extern "C" int crest_cuda_scc_step(void *handle, int n, int nat, const double *vao, const double *vdp,
++                                   const double *vqp, double *eval) noexcept {
++    if (!handle) return CREST_CUDA_INVALID_ARGUMENT;
++    Session &s = *static_cast<Session *>(handle);
++    crest_cuda_error e{};
++    s.ccur = nullptr;
++    if (!s.scc_ready || !vao || !vdp || !vqp || !eval) {
++        record(e, CREST_CUDA_INVALID_ARGUMENT, CREST_CUDA_STAGE_ARGUMENT, 0);
++    } else if (n != s.n || nat != s.scc_nat) {
++        record(e, CREST_CUDA_INVALID_DIMENSION, CREST_CUDA_STAGE_ARGUMENT, n);
++    }
++    int previous = -1;
++    bool entered = false;
++    bool warm_done = false;  // the warm Jacobi path answered (s.error and the counters are set there)
++    int info = 0;
++    if (!e.status) entered = enter_device(s, previous, e);
++    if (entered) {
++        const size_t na = static_cast<size_t>(nat);
++        do {
++            if (!copy(s, s.dvao, vao, static_cast<size_t>(n) * sizeof(double), cudaMemcpyHostToDevice,
++                      CREST_CUDA_STAGE_UPLOAD_H, e)) break;
++            if (!copy(s, s.dvdp, vdp, 3 * na * sizeof(double), cudaMemcpyHostToDevice, CREST_CUDA_STAGE_UPLOAD_H, e)) break;
++            if (!copy(s, s.dvqp, vqp, 6 * na * sizeof(double), cudaMemcpyHostToDevice, CREST_CUDA_STAGE_UPLOAD_H, e)) break;
++            if (!runtime_ok(static_cast<cudaError_t>(crest_scc_build_h(n, s.dh0, s.ds, s.ddp, s.dqp, s.dat, s.dvao,
++                                                                       s.dvdp, s.dvqp, s.a, s.stream)),
++                            CREST_CUDA_STAGE_SOLVE, e)) break;
++            if (warmjacobi_on()) {
++                if (warm_solve_dev(s, n, eval) == kWarmDone) {
++                    warm_done = true;
++                    break;
++                }
++                // nothing usable from the warm path (it used a as scratch): rebuild H, then the standard solver
++                if (!runtime_ok(static_cast<cudaError_t>(crest_scc_build_h(n, s.dh0, s.ds, s.ddp, s.dqp, s.dat, s.dvao,
++                                                                           s.dvdp, s.dvqp, s.a, s.stream)),
++                                CREST_CUDA_STAGE_SOLVE, e)) break;
++            }
++            // sygvd overwrites its S argument with the Cholesky factor: solve on a copy of the stored overlap
++            if (!runtime_ok(cudaMemcpyAsync(s.b, s.ds, s.matrix_bytes, cudaMemcpyDeviceToDevice, s.stream),
++                            CREST_CUDA_STAGE_SOLVE, e)) break;
++            if (!solver_ok(cusolverDnDsygvd(s.solver, CUSOLVER_EIG_TYPE_1, CUSOLVER_EIG_MODE_VECTOR,
++                                            CUBLAS_FILL_MODE_UPPER, n, s.a, n, s.b, n, s.w, s.work, s.lwork, s.info),
++                           CREST_CUDA_STAGE_SOLVE, e)) break;
++            if (!copy(s, &info, s.info, sizeof(int), cudaMemcpyDeviceToHost, CREST_CUDA_STAGE_DOWNLOAD_INFO, e)) break;
++            if (!runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e)) break;
++            if (info != 0) {
++                record(e, CREST_CUDA_DEVICE_INFO_ERROR, CREST_CUDA_STAGE_DEVICE_INFO, info);
++                break;
++            }
++            if (!copy(s, eval, s.w, static_cast<size_t>(n) * sizeof(double), cudaMemcpyDeviceToHost,
++                      CREST_CUDA_STAGE_DOWNLOAD_VALUES, e)) break;
++            if (!runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e)) break;
++            s.ccur = s.a;
++        } while (false);
++        if (warm_done) e = s.error;
++        if (e.status)
++            runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e);
++    }
++    restore_device(s, previous, e);
++    if (!warm_done) {
++        if (e.status) ++s.stats.failed_solves;
++        else ++s.stats.successful_solves;
++    }
++    if (!e.status) scc_steps.fetch_add(1, std::memory_order_relaxed);
++    s.error = e;
++    return e.status;
++}
++
++extern "C" int crest_cuda_scc_density(void *handle, int n, const double *focc, double *red) noexcept {
++    if (!handle) return CREST_CUDA_INVALID_ARGUMENT;
++    Session &s = *static_cast<Session *>(handle);
++    crest_cuda_error e{};
++    if (!s.scc_ready || !s.ccur || !focc || !red) {
++        record(e, CREST_CUDA_INVALID_ARGUMENT, CREST_CUDA_STAGE_ARGUMENT, 0);
++    } else if (n != s.n) {
++        record(e, CREST_CUDA_INVALID_DIMENSION, CREST_CUDA_STAGE_ARGUMENT, n);
++    }
++    int previous = -1;
++    bool entered = false;
++    if (!e.status) entered = enter_device(s, previous, e);
++    if (entered) {
++        double *const c = s.ccur;
++        double *const scratch = c == s.a ? s.b : s.a;
++        const double one = 1.0, zero = 0.0;
++        do {
++            if (!copy(s, s.w, focc, static_cast<size_t>(n) * sizeof(double), cudaMemcpyHostToDevice,
++                      CREST_CUDA_STAGE_UPLOAD_OCCUPATIONS, e)) break;
++            if (!blas_ok(cublasDdgmm(s.blas, CUBLAS_SIDE_RIGHT, n, n, c, n, s.w, 1, scratch, n),
++                         CREST_CUDA_STAGE_DENSITY_SCALE, e)) break;
++            if (!blas_ok(cublasDgemm(s.blas, CUBLAS_OP_N, CUBLAS_OP_T, n, n, n, &one, scratch, n, c, n, &zero, s.density, n),
++                         CREST_CUDA_STAGE_DENSITY_GEMM, e)) break;
++            if (!runtime_ok(static_cast<cudaError_t>(crest_scc_reduce(n, s.density, s.ds, s.ddp, s.dqp, s.dh0, s.dred,
++                                                                      s.stream)),
++                            CREST_CUDA_STAGE_DENSITY_GEMM, e)) break;
++            if (!copy(s, red, s.dred, CREST_SCC_NRED * static_cast<size_t>(n) * sizeof(double), cudaMemcpyDeviceToHost,
++                      CREST_CUDA_STAGE_DOWNLOAD_DENSITY, e)) break;
++            runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e);
++        } while (false);
++        if (e.status)
++            runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e);
++    }
++    restore_device(s, previous, e);
++    s.error = e;
++    return e.status;
++}
++
++extern "C" int crest_cuda_scc_end(void *handle, int n, double *coeff, double *pmat) noexcept {
++    if (!handle) return CREST_CUDA_INVALID_ARGUMENT;
++    Session &s = *static_cast<Session *>(handle);
++    crest_cuda_error e{};
++    if (!s.scc_ready || !s.ccur || !coeff || !pmat) {
++        record(e, CREST_CUDA_INVALID_ARGUMENT, CREST_CUDA_STAGE_ARGUMENT, 0);
++    } else if (n != s.n) {
++        record(e, CREST_CUDA_INVALID_DIMENSION, CREST_CUDA_STAGE_ARGUMENT, n);
++    }
++    int previous = -1;
++    bool entered = false;
++    if (!e.status) entered = enter_device(s, previous, e);
++    if (entered) {
++        do {
++            if (!copy(s, coeff, s.ccur, s.matrix_bytes, cudaMemcpyDeviceToHost, CREST_CUDA_STAGE_DOWNLOAD_VECTORS, e)) break;
++            if (!copy(s, pmat, s.density, s.matrix_bytes, cudaMemcpyDeviceToHost, CREST_CUDA_STAGE_DOWNLOAD_DENSITY, e)) break;
++            runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e);
++        } while (false);
++        if (e.status)
++            runtime_ok(cudaStreamSynchronize(s.stream), CREST_CUDA_STAGE_SYNCHRONIZE, e);
++    }
++    restore_device(s, previous, e);
++    s.scc_ready = false;
++    s.ccur = nullptr;
++    s.cc_valid = false;  // the factor belongs to this evaluation's device overlap, which the host path cannot compare
++    s.wj_valid = false;
++    s.error = e;
++    return e.status;
++}
++
 +extern "C" int crest_cuda_density(void *handle, int n, const double *coeff,
 +                                   const double *focc, double *pmat) noexcept {
 +    if (!handle) return CREST_CUDA_INVALID_ARGUMENT;
@@ -5598,10 +6109,48 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +    delete lease;
 +    return error->status;
 +}
++
++// Device SCC calls on a lease (same rules as crest_cuda_lease_solve: a tainted lease returns its first error).
++#define CREST_LEASE_CALL(CALL)                                            \
++    if (!error) return CREST_CUDA_INVALID_ARGUMENT;                     \
++    *error = crest_cuda_error{};                                        \
++    Lease *lease = static_cast<Lease *>(handle);                        \
++    if (!same_lease(lease)) return argument_error(error);               \
++    if (lease->tainted) {                                               \
++        *error = lease->first_error;                                    \
++        return error->status;                                           \
++    }                                                                   \
++    CALL;                                                               \
++    *error = lease->session->error;                                     \
++    taint(*lease, *error);                                              \
++    return error->status;
++
++extern "C" int crest_cuda_lease_scc_begin(void *handle, int n, int nat, const double *h0, const double *smat,
++                                          const double *dpint, const double *qpint, const int *ao2at,
++                                          crest_cuda_error *error) noexcept {
++    CREST_LEASE_CALL(crest_cuda_scc_begin(lease->session, n, nat, h0, smat, dpint, qpint, ao2at))
++}
++
++extern "C" int crest_cuda_lease_scc_step(void *handle, int n, int nat, const double *vao, const double *vdp,
++                                         const double *vqp, double *eval, crest_cuda_error *error) noexcept {
++    CREST_LEASE_CALL(crest_cuda_scc_step(lease->session, n, nat, vao, vdp, vqp, eval))
++}
++
++extern "C" int crest_cuda_lease_scc_density(void *handle, int n, const double *focc, double *red,
++                                            crest_cuda_error *error) noexcept {
++    CREST_LEASE_CALL(crest_cuda_scc_density(lease->session, n, focc, red))
++}
++
++extern "C" int crest_cuda_lease_scc_end(void *handle, int n, double *coeff, double *pmat,
++                                        crest_cuda_error *error) noexcept {
++    CREST_LEASE_CALL(crest_cuda_scc_end(lease->session, n, coeff, pmat))
++}
++
++#undef CREST_LEASE_CALL
 diff -ruN a/src/calculator/cuda/crest_cuda_bridge.h b/src/calculator/cuda/crest_cuda_bridge.h
 --- a/src/calculator/cuda/crest_cuda_bridge.h
 +++ b/src/calculator/cuda/crest_cuda_bridge.h
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,243 @@
 +// SPDX-License-Identifier: LGPL-3.0-or-later
 +#ifndef CREST_CUDA_BRIDGE_H
 +#define CREST_CUDA_BRIDGE_H
@@ -5819,10 +6368,176 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.h b/src/calculator/cuda/crest_
 + * not establish physical device-memory release. */
 +int crest_cuda_lease_release_ex(void **lease, crest_cuda_error *error) CREST_CUDA_NOEXCEPT;
 +
++/* Opt-in GPU-resident SCC iteration (CREST_CUDA_DEVSCC=1; see crest_cuda_bridge.cpp). available() is 1 when the
++ * switch is on (with CREST_CUDA_WARMJACOBI=1 the device solve is the warm Jacobi path). Per evaluation: scc_begin (H0, S, dipole (3,n,n) and quadrupole
++ * (6,n,n) integrals, 1-based orbital-to-atom map); per iteration: scc_step (orbital, dipole and quadrupole potential
++ * shifts -> eigenvalues) and scc_density (occupations -> red, n x 11 per-orbital Mulliken population, dipole and
++ * quadrupole moments, band energy); after the loop: scc_end (eigenvectors and density of the last iteration). */
++int crest_cuda_scc_available(void) CREST_CUDA_NOEXCEPT;
++int crest_cuda_scc_begin(void *handle, int n, int nat, const double *h0, const double *smat, const double *dpint,
++                         const double *qpint, const int *ao2at) CREST_CUDA_NOEXCEPT;
++int crest_cuda_scc_step(void *handle, int n, int nat, const double *vao, const double *vdp, const double *vqp,
++                        double *eval) CREST_CUDA_NOEXCEPT;
++int crest_cuda_scc_density(void *handle, int n, const double *focc, double *red) CREST_CUDA_NOEXCEPT;
++int crest_cuda_scc_end(void *handle, int n, double *coeff, double *pmat) CREST_CUDA_NOEXCEPT;
++int crest_cuda_lease_scc_begin(void *lease, int n, int nat, const double *h0, const double *smat, const double *dpint,
++                               const double *qpint, const int *ao2at, crest_cuda_error *error) CREST_CUDA_NOEXCEPT;
++int crest_cuda_lease_scc_step(void *lease, int n, int nat, const double *vao, const double *vdp, const double *vqp,
++                              double *eval, crest_cuda_error *error) CREST_CUDA_NOEXCEPT;
++int crest_cuda_lease_scc_density(void *lease, int n, const double *focc, double *red,
++                                 crest_cuda_error *error) CREST_CUDA_NOEXCEPT;
++int crest_cuda_lease_scc_end(void *lease, int n, double *coeff, double *pmat,
++                             crest_cuda_error *error) CREST_CUDA_NOEXCEPT;
++
 +#ifdef __cplusplus
 +}
 +#endif
 +#undef CREST_CUDA_NOEXCEPT
++#endif
+diff -ruN a/src/calculator/cuda/crest_cuda_scc.cu b/src/calculator/cuda/crest_cuda_scc.cu
+--- a/src/calculator/cuda/crest_cuda_scc.cu
++++ b/src/calculator/cuda/crest_cuda_scc.cu
+@@ -0,0 +1,106 @@
++// SPDX-License-Identifier: LGPL-3.0-or-later
++// Device kernels of the opt-in GPU-resident SCC path (CREST_CUDA_DEVSCC=1). They use the formulas of tblite's
++// add_pot_to_h1 (effective Hamiltonian from the potential shifts), get_mulliken_shell_charges and
++// get_mulliken_atomic_multipoles (per-orbital populations) and get_electronic_energy (per-orbital band energy), in the
++// same operation order within one matrix element; only the order of the sums over orbitals differs. Matrices are
++// column-major n x n; the multipole integrals are tblite's (3|6, n, n) arrays, operator centered on the last index.
++#include "crest_cuda_scc.h"
++
++#include <cstddef>
++
++namespace {
++
++__global__ void build_h_kernel(int n, const double *__restrict__ h0, const double *__restrict__ s,
++                               const double *__restrict__ dp, const double *__restrict__ qp,
++                               const int *__restrict__ at, const double *__restrict__ vao,
++                               const double *__restrict__ vdp, const double *__restrict__ vqp,
++                               double *__restrict__ h) {
++    const size_t nn = static_cast<size_t>(n) * static_cast<size_t>(n);
++    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
++    for (size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; idx < nn; idx += stride) {
++        const int j = static_cast<int>(idx % static_cast<size_t>(n));
++        const int i = static_cast<int>(idx / static_cast<size_t>(n));
++        const size_t ji = idx;
++        const size_t ij = static_cast<size_t>(i) + static_cast<size_t>(n) * static_cast<size_t>(j);
++        const size_t ai = static_cast<size_t>(at[i]), aj = static_cast<size_t>(at[j]);
++        // add_vao_to_h1: h1(j,i) - s(j,i) * 0.5 * (vao(j) + vao(i))
++        double v = h0[ji] - s[ji] * 0.5 * (vao[j] + vao[i]);
++        // add_vmp_to_h1 (dipole, then quadrupole): h1(j,i) - 0.5 dot(mp(:,j,i), vmp(:,at(i)))
++        //                                                - 0.5 dot(mp(:,i,j), vmp(:,at(j)))
++        const double *d1 = dp + 3 * ji, *d2 = dp + 3 * ij;
++        const double *w1 = vdp + 3 * ai, *w2 = vdp + 3 * aj;
++        double t1 = d1[0] * w1[0], t2 = d2[0] * w2[0];
++        for (int k = 1; k < 3; ++k) {
++            t1 = t1 + d1[k] * w1[k];
++            t2 = t2 + d2[k] * w2[k];
++        }
++        v = v - 0.5 * t1 - 0.5 * t2;
++        const double *q1 = qp + 6 * ji, *q2 = qp + 6 * ij;
++        const double *u1 = vqp + 6 * ai, *u2 = vqp + 6 * aj;
++        t1 = q1[0] * u1[0];
++        t2 = q2[0] * u2[0];
++        for (int k = 1; k < 6; ++k) {
++            t1 = t1 + q1[k] * u1[k];
++            t2 = t2 + q2[k] * u2[k];
++        }
++        h[ji] = v - 0.5 * t1 - 0.5 * t2;
++    }
++}
++
++constexpr int kThreads = 256;
++
++// One block per orbital i: red(i, c) for c = 0 sum_j P(j,i) S(j,i); 1..3 sum_j P(j,i) dp(:,j,i);
++// 4..9 sum_j P(j,i) qp(:,j,i); 10 sum_j H0(j,i) P(j,i). red is column-major n x 11.
++__global__ void reduce_kernel(int n, const double *__restrict__ p, const double *__restrict__ s,
++                              const double *__restrict__ dp, const double *__restrict__ qp,
++                              const double *__restrict__ h0, double *__restrict__ red) {
++    __shared__ double sh[CREST_SCC_NRED * kThreads];
++    const int i = blockIdx.x;
++    double acc[CREST_SCC_NRED];
++    for (int c = 0; c < CREST_SCC_NRED; ++c) acc[c] = 0.0;
++    for (int j = threadIdx.x; j < n; j += blockDim.x) {
++        const size_t ji = static_cast<size_t>(j) + static_cast<size_t>(n) * static_cast<size_t>(i);
++        const double pji = p[ji];
++        acc[0] = acc[0] + pji * s[ji];
++        for (int k = 0; k < 3; ++k) acc[1 + k] = acc[1 + k] + pji * dp[3 * ji + k];
++        for (int k = 0; k < 6; ++k) acc[4 + k] = acc[4 + k] + pji * qp[6 * ji + k];
++        acc[10] = acc[10] + h0[ji] * pji;
++    }
++    for (int c = 0; c < CREST_SCC_NRED; ++c) sh[c * kThreads + threadIdx.x] = acc[c];
++    __syncthreads();
++    for (int width = kThreads / 2; width > 0; width >>= 1) {
++        if (threadIdx.x < width)
++            for (int c = 0; c < CREST_SCC_NRED; ++c)
++                sh[c * kThreads + threadIdx.x] = sh[c * kThreads + threadIdx.x] + sh[c * kThreads + threadIdx.x + width];
++        __syncthreads();
++    }
++    if (threadIdx.x == 0)
++        for (int c = 0; c < CREST_SCC_NRED; ++c)
++            red[static_cast<size_t>(c) * static_cast<size_t>(n) + static_cast<size_t>(i)] = sh[c * kThreads];
++}
++
++}  // namespace
++
++extern "C" int crest_scc_build_h(int n, const double *h0, const double *s, const double *dp, const double *qp,
++                                 const int *at, const double *vao, const double *vdp, const double *vqp, double *h,
++                                 cudaStream_t stream) {
++    const size_t nn = static_cast<size_t>(n) * static_cast<size_t>(n);
++    size_t blocks = (nn + kThreads - 1) / kThreads;
++    if (blocks > 8192) blocks = 8192;
++    build_h_kernel<<<static_cast<unsigned>(blocks), kThreads, 0, stream>>>(n, h0, s, dp, qp, at, vao, vdp, vqp, h);
++    return static_cast<int>(cudaGetLastError());
++}
++
++extern "C" int crest_scc_reduce(int n, const double *p, const double *s, const double *dp, const double *qp,
++                                const double *h0, double *red, cudaStream_t stream) {
++    reduce_kernel<<<static_cast<unsigned>(n), kThreads, 0, stream>>>(n, p, s, dp, qp, h0, red);
++    return static_cast<int>(cudaGetLastError());
++}
++
++extern "C" int crest_scc_kernels_check(void) {
++    cudaFuncAttributes attr;
++    cudaError_t e = cudaFuncGetAttributes(&attr, build_h_kernel);
++    if (e == cudaSuccess) e = cudaFuncGetAttributes(&attr, reduce_kernel);
++    if (e != cudaSuccess) cudaGetLastError();  // clear it, so that it does not surface in a later CUDA call
++    return static_cast<int>(e);
++}
+diff -ruN a/src/calculator/cuda/crest_cuda_scc.h b/src/calculator/cuda/crest_cuda_scc.h
+--- a/src/calculator/cuda/crest_cuda_scc.h
++++ b/src/calculator/cuda/crest_cuda_scc.h
+@@ -0,0 +1,31 @@
++// SPDX-License-Identifier: LGPL-3.0-or-later
++// Kernels of the opt-in GPU-resident SCC path (crest_cuda_scc.cu); called by the CUDA bridge on its session stream.
++#ifndef CREST_CUDA_SCC_H
++#define CREST_CUDA_SCC_H
++
++#include <cuda_runtime_api.h>
++
++#define CREST_SCC_NRED 11
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++// h = H0 - S o (vao_j + vao_i)/2 - dipole and quadrupole potential terms (tblite add_pot_to_h1); at is 0-based
++int crest_scc_build_h(int n, const double *h0, const double *s, const double *dp, const double *qp, const int *at,
++                      const double *vao, const double *vdp, const double *vqp, double *h, cudaStream_t stream);
++
++// red (n x 11, column-major): per orbital i the sums over j of P(j,i) times S, the 3 dipole and 6 quadrupole
++// integrals, and H0(j,i) P(j,i)
++int crest_scc_reduce(int n, const double *p, const double *s, const double *dp, const double *qp, const double *h0,
++                     double *red, cudaStream_t stream);
++
++// 0 (cudaSuccess) when both kernels have code for the current GPU; otherwise the CUDA error, e.g.
++// cudaErrorNoKernelImageForDevice for a GPU generation the build's -gencode list does not cover
++int crest_scc_kernels_check(void);
++
++#ifdef __cplusplus
++}
++#endif
++
 +#endif
 diff -ruN a/src/calculator/meson.build b/src/calculator/meson.build
 --- a/src/calculator/meson.build
@@ -6093,7 +6808,7 @@ diff -ruN a/src/calculator/tblite_api.F90 b/src/calculator/tblite_api.F90
 diff -ruN a/src/calculator/tblite_gpu_solver.F90 b/src/calculator/tblite_gpu_solver.F90
 --- a/src/calculator/tblite_gpu_solver.F90
 +++ b/src/calculator/tblite_gpu_solver.F90
-@@ -0,0 +1,466 @@
+@@ -0,0 +1,623 @@
 +! This file is part of crest.
 +! SPDX-Identifier: LGPL-3.0-or-later
 +
@@ -6171,6 +6886,9 @@ diff -ruN a/src/calculator/tblite_gpu_solver.F90 b/src/calculator/tblite_gpu_sol
 +    integer(c_int64_t) :: completed_densities = 0_c_int64_t
 +#endif
 +    logical :: audit = .false.
++#ifdef WITH_TBLITE_GPU_PERSISTENCE_EXPERIMENT
++    logical :: scc_active = .false.  ! CREST_CUDA_DEVSCC: the current evaluation runs its SCC on the device
++#endif
 +  contains
 +    procedure :: solve_sp => cuda_solve_sp
 +    procedure :: solve_dp => cuda_solve_dp
@@ -6179,6 +6897,13 @@ diff -ruN a/src/calculator/tblite_gpu_solver.F90 b/src/calculator/tblite_gpu_sol
 +#ifdef WITH_TBLITE_GPU_DENSITY_EXPERIMENT
 +    procedure :: build_density => cuda_build_density
 +    procedure :: density_count
++#endif
++#ifdef WITH_TBLITE_GPU_PERSISTENCE_EXPERIMENT
++    procedure :: scc_device => cuda_scc_device
++    procedure :: scc_begin => cuda_scc_begin
++    procedure :: scc_solve => cuda_scc_solve
++    procedure :: scc_density => cuda_scc_density
++    procedure :: scc_end => cuda_scc_end
 +#endif
 +    final :: finalize_cuda_solver
 +  end type
@@ -6236,6 +6961,45 @@ diff -ruN a/src/calculator/tblite_gpu_solver.F90 b/src/calculator/tblite_gpu_sol
 +    function crest_cuda_lease_release_ex(handle, detail) bind(C) result(status)
 +      import :: c_int, c_ptr, cuda_error
 +      type(c_ptr), intent(inout) :: handle
++      type(cuda_error), intent(out) :: detail
++      integer(c_int) :: status
++    end function
++    function crest_cuda_scc_available() bind(C) result(status)
++      import :: c_int
++      integer(c_int) :: status
++    end function
++    function crest_cuda_lease_scc_begin(handle, n, nat, h0, smat, dpint, qpint, ao2at, detail) bind(C) result(status)
++      import :: c_int, c_ptr, c_double, cuda_error
++      type(c_ptr), value :: handle
++      integer(c_int), value :: n, nat
++      real(c_double), intent(in) :: h0(*), smat(*), dpint(*), qpint(*)
++      integer(c_int), intent(in) :: ao2at(*)
++      type(cuda_error), intent(out) :: detail
++      integer(c_int) :: status
++    end function
++    function crest_cuda_lease_scc_step(handle, n, nat, vao, vdp, vqp, eval, detail) bind(C) result(status)
++      import :: c_int, c_ptr, c_double, cuda_error
++      type(c_ptr), value :: handle
++      integer(c_int), value :: n, nat
++      real(c_double), intent(in) :: vao(*), vdp(*), vqp(*)
++      real(c_double), intent(out) :: eval(*)
++      type(cuda_error), intent(out) :: detail
++      integer(c_int) :: status
++    end function
++    function crest_cuda_lease_scc_density(handle, n, focc, red, detail) bind(C) result(status)
++      import :: c_int, c_ptr, c_double, cuda_error
++      type(c_ptr), value :: handle
++      integer(c_int), value :: n
++      real(c_double), intent(in) :: focc(*)
++      real(c_double), intent(out) :: red(*)
++      type(cuda_error), intent(out) :: detail
++      integer(c_int) :: status
++    end function
++    function crest_cuda_lease_scc_end(handle, n, coeff, pmat, detail) bind(C) result(status)
++      import :: c_int, c_ptr, c_double, cuda_error
++      type(c_ptr), value :: handle
++      integer(c_int), value :: n
++      real(c_double), intent(out) :: coeff(*), pmat(*)
 +      type(cuda_error), intent(out) :: detail
 +      integer(c_int) :: status
 +    end function
@@ -6466,6 +7230,114 @@ diff -ruN a/src/calculator/tblite_gpu_solver.F90 b/src/calculator/tblite_gpu_sol
 +    end if
 +    self%completed_densities = self%completed_densities + 1_c_int64_t
 +  end subroutine
++
++#ifdef WITH_TBLITE_GPU_PERSISTENCE_EXPERIMENT
++  ! CREST_CUDA_DEVSCC=1: tblite's next_scf builds the Hamiltonian, solves it and forms the density on the device
++  ! (crest_cuda_bridge.cpp, crest_cuda_scc.cu); only eigenvalues, occupations and per-orbital reductions cross.
++  logical function cuda_scc_device(self)
++    class(cuda_diag_solver), intent(inout) :: self
++    cuda_scc_device = self%scc_active
++  end function
++
++  subroutine cuda_scc_begin(self, h0, smat, dpint, qpint, ao2at, nat, error)
++    class(cuda_diag_solver), intent(inout) :: self
++    real(wp), contiguous, intent(in) :: h0(:, :), smat(:, :), dpint(:, :, :), qpint(:, :, :)
++    integer, intent(in) :: ao2at(:)
++    integer, intent(in) :: nat
++    type(error_type), allocatable, intent(out) :: error
++    integer(c_int) :: status
++    integer(c_int), allocatable :: at(:)
++    type(cuda_error) :: detail
++
++    self%scc_active = .false.
++    if (crest_cuda_scc_available() == 0_c_int) return
++    ! anything but the expected shapes keeps the host path
++    if (self%ndim <= 0 .or. size(h0, 1) /= self%ndim .or. size(h0, 2) /= self%ndim .or. &
++        size(smat, 1) /= self%ndim .or. size(smat, 2) /= self%ndim .or. size(ao2at) /= self%ndim .or. &
++        size(dpint, 1) /= 3 .or. size(dpint, 2) /= self%ndim .or. size(qpint, 1) /= 6 .or. &
++        size(qpint, 2) /= self%ndim .or. nat <= 0) return
++    if (.not.c_associated(self%handle)) then
++      status = crest_cuda_lease_acquire_ex(int(self%ndim, c_int), 1_c_int, self%handle, detail)
++      if (status /= 0_c_int) then
++        call cuda_failure(error, 'scc create', status, detail)
++        return
++      end if
++    end if
++    allocate(at(size(ao2at)))
++    at(:) = int(ao2at, c_int)
++    status = crest_cuda_lease_scc_begin(self%handle, int(self%ndim, c_int), int(nat, c_int), h0, smat, dpint, &
++      & qpint, at, detail)
++    if (status /= 0_c_int) then
++      call cuda_failure(error, 'scc begin', status, detail)
++      return
++    end if
++    self%scc_active = .true.
++  end subroutine
++
++  subroutine cuda_scc_solve(self, vao, vdp, vqp, eval, error)
++    class(cuda_diag_solver), intent(inout) :: self
++    real(wp), contiguous, intent(in) :: vao(:), vdp(:, :), vqp(:, :)
++    real(wp), contiguous, intent(inout) :: eval(:)
++    type(error_type), allocatable, intent(out) :: error
++    integer(c_int) :: status
++    type(cuda_error) :: detail
++
++    if (.not.self%scc_active .or. size(vao) /= self%ndim .or. size(eval) /= self%ndim .or. &
++        size(vdp, 1) /= 3 .or. size(vqp, 1) /= 6 .or. size(vqp, 2) /= size(vdp, 2)) then
++      detail = cuda_error(2_c_int, 1_c_int, 0_c_int, 0_c_int, 0_c_int, 0_c_int, 0_c_int, 0_c_int)
++      call cuda_failure(error, 'scc solve dimensions', detail%status, detail)
++      return
++    end if
++    status = crest_cuda_lease_scc_step(self%handle, int(self%ndim, c_int), int(size(vdp, 2), c_int), vao, vdp, &
++      & vqp, eval, detail)
++    if (status /= 0_c_int) then
++      call cuda_failure(error, 'scc solve', status, detail)
++      return
++    end if
++    self%completed_solves = self%completed_solves + 1_c_int64_t
++  end subroutine
++
++  subroutine cuda_scc_density(self, focc, red, error)
++    class(cuda_diag_solver), intent(inout) :: self
++    real(wp), contiguous, intent(in) :: focc(:)
++    real(wp), contiguous, intent(inout) :: red(:, :)
++    type(error_type), allocatable, intent(out) :: error
++    integer(c_int) :: status
++    type(cuda_error) :: detail
++
++    if (.not.self%scc_active .or. size(focc) /= self%ndim .or. size(red, 1) /= self%ndim .or. &
++        size(red, 2) /= 11) then
++      detail = cuda_error(2_c_int, 1_c_int, 0_c_int, 0_c_int, 0_c_int, 0_c_int, 0_c_int, 0_c_int)
++      call cuda_failure(error, 'scc density dimensions', detail%status, detail)
++      return
++    end if
++    status = crest_cuda_lease_scc_density(self%handle, int(self%ndim, c_int), focc, red, detail)
++    if (status /= 0_c_int) then
++      call cuda_failure(error, 'scc density', status, detail)
++      return
++    end if
++    self%completed_densities = self%completed_densities + 1_c_int64_t
++  end subroutine
++
++  subroutine cuda_scc_end(self, coeff, density, error)
++    class(cuda_diag_solver), intent(inout) :: self
++    real(wp), contiguous, intent(inout) :: coeff(:, :), density(:, :)
++    type(error_type), allocatable, intent(out) :: error
++    integer(c_int) :: status
++    type(cuda_error) :: detail
++
++    if (.not.self%scc_active) return
++    self%scc_active = .false.
++    if (size(coeff, 1) /= self%ndim .or. size(coeff, 2) /= self%ndim .or. size(density, 1) /= self%ndim .or. &
++        size(density, 2) /= self%ndim) then
++      detail = cuda_error(2_c_int, 1_c_int, 0_c_int, 0_c_int, 0_c_int, 0_c_int, 0_c_int, 0_c_int)
++      call cuda_failure(error, 'scc end dimensions', detail%status, detail)
++      return
++    end if
++    status = crest_cuda_lease_scc_end(self%handle, int(self%ndim, c_int), coeff, density, detail)
++    if (status /= 0_c_int) call cuda_failure(error, 'scc end', status, detail)
++  end subroutine
++#endif
 +
 +  function density_count(self) result(count)
 +    class(cuda_diag_solver), intent(in) :: self

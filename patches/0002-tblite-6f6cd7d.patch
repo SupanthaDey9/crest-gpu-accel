@@ -536,7 +536,82 @@ diff -ruN a/src/tblite/scf/diag.f90 b/src/tblite/scf/diag.f90
 diff -ruN a/src/tblite/scf/iterator.f90 b/src/tblite/scf/iterator.f90
 --- a/src/tblite/scf/iterator.f90
 +++ b/src/tblite/scf/iterator.f90
-@@ -308,6 +308,7 @@
+@@ -32,7 +32,7 @@
+    use tblite_xtb_coulomb, only : tb_coulomb
+    use tblite_scf_mixer, only : mixer_type
+    use tblite_scf_info, only : scf_info
+-   use tblite_scf_potential, only : potential_type, add_pot_to_h1
++   use tblite_scf_potential, only : potential_type, add_pot_to_h1, add_pot_to_ao
+    use tblite_scf_solver, only : solver_type
+    implicit none
+    private
+@@ -84,8 +84,9 @@
+    !> Error handling
+    type(error_type), allocatable, intent(out) :: error
+ 
+-   real(wp), allocatable :: eao(:)
+-   real(wp) :: ts
++   real(wp), allocatable :: eao(:), red(:, :)
++   real(wp) :: ts, e_fermi, stmp(2)
++   integer :: spin, homo, iao
+ 
+    if (iscf > 0) then
+       call mixer%next(error)
+@@ -104,6 +105,45 @@
+    if (present(interactions) .and. present(icache)) then
+       call interactions%get_potential(mol, icache, wfn, pot)
+    end if
++   if (size(wfn%density, 3) == 1 .and. solver%scc_device()) then
++      ! Device SCC path: the solver builds the Hamiltonian from the orbital and multipole shifts on its device,
++      ! solves it and builds the density there; only eigenvalues, occupations and per-orbital reductions cross to
++      ! the host. Occupations, charges, multipoles and energies follow the host path below term by term.
++      call add_pot_to_ao(bas, pot)
++
++      call set_mixer(mixer, wfn, info)
++
++      call solver%scc_solve(pot%vao(:, 1), pot%vdp(:, :, 1), pot%vqp(:, :, 1), wfn%emo(:, 1), error)
++      if (allocated(error)) return
++      wfn%focc(:, :) = 0.0_wp
++      do spin = 1, 2
++         call get_fermi_filling(solver%nel(spin), solver%kt, wfn%emo(:, 1), &
++            & homo, wfn%focc(:, spin), e_fermi)
++      end do
++      allocate(red(bas%nao, 11))
++      call solver%scc_density(wfn%focc(:, 1) + wfn%focc(:, 2), red, error)
++      if (allocated(error)) return
++      do spin = 1, 2
++         call get_electronic_entropy(wfn%focc(:, spin), wfn%kt, stmp(spin))
++      end do
++      ts = sum(stmp)
++
++      wfn%qsh(:, :) = 0.0_wp
++      wfn%dpat(:, :, :) = 0.0_wp
++      wfn%qpat(:, :, :) = 0.0_wp
++      do iao = 1, bas%nao
++         wfn%qsh(bas%ao2sh(iao), 1) = wfn%qsh(bas%ao2sh(iao), 1) - red(iao, 1)
++         wfn%dpat(:, bas%ao2at(iao), 1) = wfn%dpat(:, bas%ao2at(iao), 1) - red(iao, 2:4)
++         wfn%qpat(:, bas%ao2at(iao), 1) = wfn%qpat(:, bas%ao2at(iao), 1) - red(iao, 5:10)
++      end do
++      wfn%qsh(:, 1) = wfn%qsh(:, 1) + wfn%n0sh
++      call get_qat_from_qsh(bas, wfn%qsh, wfn%qat)
++
++      call diff_mixer(mixer, wfn, info)
++
++      allocate(eao(bas%nao))
++      eao(:) = red(:, 11)
++   else
+    call add_pot_to_h1(bas, ints, pot, wfn%coeff)
+ 
+    call set_mixer(mixer, wfn, info)
+@@ -124,6 +164,7 @@
+ 
+    allocate(eao(bas%nao), source=0.0_wp)
+    call get_electronic_energy(ints%hamiltonian, wfn%density, eao)
++   end if
+ 
+    energies(:) = ts / size(energies)
+    call reduce(energies, eao, bas%ao2at)
+@@ -308,6 +349,7 @@
     integer :: spin
  
     call solver%get_density(wfn%coeff, ints%overlap, wfn%emo, wfn%focc, wfn%density, error)
@@ -544,6 +619,115 @@ diff -ruN a/src/tblite/scf/iterator.f90 b/src/tblite/scf/iterator.f90
     do spin = 1, 2
        call get_electronic_entropy(wfn%focc(:, spin), wfn%kt, stmp(spin))
     end do
+diff -ruN a/src/tblite/scf/potential.f90 b/src/tblite/scf/potential.f90
+--- a/src/tblite/scf/potential.f90
++++ b/src/tblite/scf/potential.f90
+@@ -28,7 +28,7 @@
+    implicit none
+    private
+ 
+-   public :: new_potential, add_pot_to_h1
++   public :: new_potential, add_pot_to_h1, add_pot_to_ao
+ 
+ 
+    !> Container for density dependent potential-shifts
+@@ -140,6 +140,18 @@
+ 
+    call magnet_to_updown(h1)
+ end subroutine add_pot_to_h1
++
++!> Expand the atom- and shell-resolved potential shifts to the orbital-resolved one, as add_pot_to_h1 does before
++!> adding the shifts to the Hamiltonian (used by the device SCC path, which builds the Hamiltonian on its device)
++subroutine add_pot_to_ao(bas, pot)
++   !> Basis set information
++   type(basis_type), intent(in) :: bas
++   !> Density dependent potential-shifts
++   type(potential_type), intent(inout) :: pot
++
++   call add_vat_to_vsh(bas, pot%vat, pot%vsh)
++   call add_vsh_to_vao(bas, pot%vsh, pot%vao)
++end subroutine add_pot_to_ao
+ 
+ !> Expand an atom-resolved potential shift to a shell-resolved potential shift
+ subroutine add_vat_to_vsh(bas, vat, vsh)
+diff -ruN a/src/tblite/scf/solver.f90 b/src/tblite/scf/solver.f90
+--- a/src/tblite/scf/solver.f90
++++ b/src/tblite/scf/solver.f90
+@@ -19,7 +19,7 @@
+ 
+ !> Declaration of the abstract base class for electronic solvers
+ module tblite_scf_solver
+-   use mctc_env, only : sp, dp, wp, error_type
++   use mctc_env, only : sp, dp, wp, error_type, fatal_error
+    use tblite_blas, only : gemm
+    implicit none
+    private
+@@ -34,6 +34,13 @@
+       procedure(get_density), deferred :: get_density
+       procedure(get_density), deferred :: get_wdensity
+       procedure(delete), deferred :: delete
++      !> Optional GPU-resident SCC iteration (one spin channel): the solver keeps the Hamiltonian, eigenvectors and
++      !> density on its device and returns only eigenvalues and per-orbital reductions; see next_scf
++      procedure :: scc_device
++      procedure :: scc_begin
++      procedure :: scc_solve
++      procedure :: scc_density
++      procedure :: scc_end
+    end type solver_type
+ 
+    abstract interface
+@@ -61,5 +68,51 @@
+          class(solver_type), intent(inout) :: self
+       end subroutine delete
+    end interface
++
++contains
++
++!> Whether this solver runs the SCC iterations of the current evaluation on its device, which only a successful
++!> scc_begin can switch on (default: never)
++logical function scc_device(self)
++   class(solver_type), intent(inout) :: self
++   scc_device = .false.
++end function scc_device
++
++!> Offer the integrals of one evaluation (one spin channel) for a device SCC path: Hamiltonian H0, overlap, dipole
++!> (3,n,n) and quadrupole (6,n,n) integrals, and the atom of each orbital. Solvers without such a path ignore it.
++subroutine scc_begin(self, h0, smat, dpint, qpint, ao2at, nat, error)
++   class(solver_type), intent(inout) :: self
++   real(wp), contiguous, intent(in) :: h0(:, :), smat(:, :), dpint(:, :, :), qpint(:, :, :)
++   integer, intent(in) :: ao2at(:)
++   integer, intent(in) :: nat
++   type(error_type), allocatable, intent(out) :: error
++end subroutine scc_begin
++
++!> Build the Hamiltonian from the orbital, dipole and quadrupole potential shifts and solve it; eigenvalues on output
++subroutine scc_solve(self, vao, vdp, vqp, eval, error)
++   class(solver_type), intent(inout) :: self
++   real(wp), contiguous, intent(in) :: vao(:), vdp(:, :), vqp(:, :)
++   real(wp), contiguous, intent(inout) :: eval(:)
++   type(error_type), allocatable, intent(out) :: error
++   call fatal_error(error, "This solver has no device SCC path")
++end subroutine scc_solve
++
++!> Build the density from the last eigenvectors and the occupations; red(:, 1) Mulliken populations, red(:, 2:4)
++!> dipole and red(:, 5:10) quadrupole moments, red(:, 11) band energy, per orbital
++subroutine scc_density(self, focc, red, error)
++   class(solver_type), intent(inout) :: self
++   real(wp), contiguous, intent(in) :: focc(:)
++   real(wp), contiguous, intent(inout) :: red(:, :)
++   type(error_type), allocatable, intent(out) :: error
++   call fatal_error(error, "This solver has no device SCC path")
++end subroutine scc_density
++
++!> Copy the eigenvectors and the density of the last iteration back to the host
++subroutine scc_end(self, coeff, density, error)
++   class(solver_type), intent(inout) :: self
++   real(wp), contiguous, intent(inout) :: coeff(:, :), density(:, :)
++   type(error_type), allocatable, intent(out) :: error
++   call fatal_error(error, "This solver has no device SCC path")
++end subroutine scc_end
+ 
+ end module tblite_scf_solver
 diff -ruN a/src/tblite/solvation/alpb.f90 b/src/tblite/solvation/alpb.f90
 --- a/src/tblite/solvation/alpb.f90
 +++ b/src/tblite/solvation/alpb.f90
@@ -619,3 +803,43 @@ diff -ruN a/src/tblite/xtb/h0.f90 b/src/tblite/xtb/h0.f90
  
              end do
           end do
+diff -ruN a/src/tblite/xtb/singlepoint.f90 b/src/tblite/xtb/singlepoint.f90
+--- a/src/tblite/xtb/singlepoint.f90
++++ b/src/tblite/xtb/singlepoint.f90
+@@ -110,6 +110,7 @@
+    type(container_cache), allocatable :: cache_list(:)
+    
+    integer :: iscf, spin
++   logical :: devscc
+ 
+    call timer%push("total")
+ 
+@@ -231,6 +232,17 @@
+       & ints%overlap, ints%dipole, ints%quadrupole, ints%hamiltonian)
+ 
+    call ctx%new_solver(solver, ints%overlap, wfn%nel, wfn%kt)
++   devscc = .false.
++   if (wfn%nspin == 1) then
++      call solver%scc_begin(ints%hamiltonian, ints%overlap, ints%dipole, ints%quadrupole, &
++         & calc%bas%ao2at, mol%nat, error)
++      if (allocated(error)) then
++         call ctx%set_error(error)
++         call ctx%delete_solver(solver)
++         return
++      end if
++      devscc = solver%scc_device()
++   end if
+    call timer%pop
+ 
+    call timer%push("scc")
+@@ -267,6 +279,10 @@
+          exit
+       end if
+    end do
++   if (devscc .and. .not.ctx%failed()) then
++      call solver%scc_end(wfn%coeff(:, :, 1), wfn%density(:, :, 1), error)
++      if (allocated(error)) call ctx%set_error(error)
++   end if
+    if (prlevel > 0) then
+       call ctx%message(repeat("-", 60))
+       call ctx%message("")

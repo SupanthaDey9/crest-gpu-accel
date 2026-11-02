@@ -10044,3 +10044,41 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
  
  !========================================================================================!
  !========================================================================================!
+diff -ruN a/subprojects/gfn0/src/gfn0_gbsa.F90 b/subprojects/gfn0/src/gfn0_gbsa.F90
+--- a/subprojects/gfn0/src/gfn0_gbsa.F90
++++ b/subprojects/gfn0/src/gfn0_gbsa.F90
+@@ -49,11 +49,15 @@
+ #ifdef WITH_GBSA
+    type(TSolvInput) :: input
+    type(TSolvModel) :: model
++   character(len=:), allocatable :: solvent
+ 
++   !> trim into a variable first: gfortran 13.4 (conda-forge) leaves the deferred-length component empty when a
++   !> structure constructor gets trim() directly (CREST then stops: "solvent: '' is not parametrized")
++   solvent = trim(solv)
+    if(alpb)then
+-   input = TSolvInput(solvent=trim(solv), alpb=.true., kernel=gbKernel%p16)
++   input = TSolvInput(solvent=solvent, alpb=.true., kernel=gbKernel%p16)
+    else
+-   input = TSolvInput(solvent=trim(solv), alpb=.false., kernel=gbKernel%still)
++   input = TSolvInput(solvent=solvent, alpb=.false., kernel=gbKernel%still)
+    endif
+    call init(model, input, 0)
+    !call info(model,stdout)
+diff -ruN a/subprojects/gfnff/src/gfnff_alpb.F90 b/subprojects/gfnff/src/gfnff_alpb.F90
+--- a/subprojects/gfnff/src/gfnff_alpb.F90
++++ b/subprojects/gfnff/src/gfnff_alpb.F90
+@@ -62,8 +62,12 @@
+ #ifdef WITH_GBSA
+    type(TSolvInput) :: input
+    type(TSolvModel) :: model
++   character(len=:), allocatable :: solvent
+ 
+-   input = TSolvInput(solvent=trim(solv), alpb=.true., kernel=gbKernel%p16)
++   !> trim into a variable first: gfortran 13.4 (conda-forge) leaves the deferred-length component empty when a
++   !> structure constructor gets trim() directly (CREST then stops: "solvent: '' is not parametrized")
++   solvent = trim(solv)
++   input = TSolvInput(solvent=solvent, alpb=.true., kernel=gbKernel%p16)
+    call init(model, input, 0)
+    !call info(model,stdout)
+    call newBornModel(model, gbsa, at)

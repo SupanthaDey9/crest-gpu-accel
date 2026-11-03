@@ -84,7 +84,7 @@ Final ensembles of the reference search and of the 25 finished replicate searche
 `build.sh` builds from upstream plus `patches/`. Two checks are run on the result:
 
 - **Same numbers as the benchmarked binary:** a single-thread single point of the Ga peptide must give a `crest.engrad` byte-identical to the one from the FastCREST binary used for the results above.
-- **Repeatable checks:** `tests/run_tests.sh` repeats the single-point checks (CPU against a reference binary, GPU against CPU) and runs a short GPU search, optionally with distributed passes.
+- **Repeatable checks:** `tests/run_tests.sh` repeats the single-point checks (CPU against a reference binary, GPU against CPU) and runs a short GPU search, optionally with distributed passes. Since 1.1.1 it also forces a GPU eigensolve that does not converge (`CREST_CUDA_TEST_NOCONV`): repeated on the CPU, the single point must match the CPU single point; if the CPU repeat fails too, the single point must fail as an ordinary SCC failure and a search must still end normally.
 
 ### Results on Nova (2026-10-28, fresh clone of this repository from GitHub, commit d6c51ab)
 
@@ -98,3 +98,10 @@ Final ensembles of the reference search and of the 25 finished replicate searche
 | Distributed passes (`--dist`, GPU driver, CPU workers on a CPU partition) | a short search in which 635 structures were optimized by Slurm worker jobs on other nodes, checked by the driver and merged; normal termination in 252 s |
 
 The same checks passed on 2026-10-26 and 2026-10-27 for earlier revisions of the patches, which differed only in source comments and two CMake message strings.
+
+### Version 1.1.1 (2026-11-03): eigensolve that does not converge, gfortran 13
+
+| Item | Value |
+|---|---|
+| Nova build | `build.sh`, gfortran 11.5.0, CUDA 12.4.1, OpenBLAS 0.3.27: rc 0; Ga peptide CPU single point (`-T 1`) byte-identical to the 1.1.0 binary (E = -415.262561312859191 Eh) |
+| `run_tests.sh`, RTX PRO 5000 Blackwell (sm_120 build, conda-forge gfortran 13.4, CUDA 13.3) | 7 of 7 passed. Tests 3 and 3b: max abs dE 8.9e-15 and 7.1e-15 Eh against the CPU. Test 3e (forced non-converged GPU solve, repeated on the CPU): max abs dE 8.9e-15 Eh, one CPU repeat. Test 3f (the CPU repeat fails too): ordinary failure, no GPU failure. Tests 4 and 4b: normal termination; in 4b one MD ended early. With 1.1.0 code, tests 4 and 4b fail with this compiler ("solvent: '' is not parametrized") |

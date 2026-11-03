@@ -15,11 +15,17 @@
 #   3 sp_gpu    single point with tblite_solver = "cuda" and CREST_ATM_GPU=1: must match test 1 to 1e-8 Eh, 1e-6 Eh/bohr
 #   3b sp_jacobi  the same with CREST_CUDA_WARMJACOBI=1 (opt-in): must match test 1 likewise, with warm Jacobi solves
 #               and no fallback to the standard solver
+#   3e sp_retry   test 3 with CREST_CUDA_TEST_NOCONV=2: the second GPU eigensolve reports that it did not converge
+#               and is repeated on the CPU (LAPACK); must match test 1 likewise, with one CPU repeat and no GPU failure
+#   3f sp_retry_fail  the same with CREST_CUDA_TEST_NOCONV=2,cpu (the CPU repeat fails too): the single point must
+#               fail as an ordinary SCC failure, as in conventional CREST, not as a GPU failure
 #   4 search    --quick iMTD-GC search on one machine with the GPU route and checkpoints: must end normally
+#   4b search_retry_fail  test 4 with CREST_CUDA_TEST_NOCONV=5000,cpu: one GPU eigensolve fails on the GPU and the
+#               CPU, so that MD ends early as in conventional CREST; the search must still end normally
 #   5 dist      the same search with CREST_DIST_OLOOP (optimization passes as Slurm array jobs)
 set -uo pipefail
 
-[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,19p' "$0"; exit 0; }
+[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,25p' "$0"; exit 0; }
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CREST=$(realpath "${1:?usage: run_tests.sh CREST [options]}") || exit 64; shift
 REF=''; DIST=''; WENV=$HERE/../slurm/worker_env.sh; GPU=1; MOL=$HERE/../examples/smoke/struc.xyz; CHRG=0; UHF=0; WORK=$PWD/crest-tests; T=4
@@ -112,6 +118,31 @@ if [[ $GPU == 1 ]]; then
     bad "3b sp_jacobi: no result (see $WORK/sp_jacobi/crest.err)"
   fi
 
+  # A GPU eigensolve that does not converge (sygvd devInfo > 0) is repeated on the CPU with LAPACK, as conventional
+  # CREST computes it. CREST_CUDA_TEST_NOCONV=k makes the k-th GPU eigensolve report that without running.
+  retry_stats() { grep -h 'CREST_CUDA_CPU_RETRY_STATS' "$WORK/$1/crest.err" | tail -1; }
+  gpu_failed() { grep -q -E 'CREST CUDA [a-z ]+ failed|GPU failure' "$WORK/$1/crest.err" "$WORK/$1/crest.out"; }
+  if sp sp_retry "$CREST" cuda CREST_ATM_GPU=1 CREST_CUDA_TEST_NOCONV=2; then
+    stats=$(retry_stats sp_retry)
+    r=$(python3 "$HERE/compare_engrad.py" "$WORK/sp_retry/crest.engrad" "$WORK/sp_cpu/crest.engrad" 1e-8 1e-6); rc=$?
+    if [[ $rc == 0 && $stats == *' solves 1 cpu_solved 1 cpu_failed 0'* ]] && ! gpu_failed sp_retry; then
+      ok "3e sp_retry: $r; ${stats#CREST_CUDA_CPU_RETRY_STATS }"
+    else
+      bad "3e sp_retry: $r; ${stats:-no STATS line}"
+    fi
+  else
+    bad "3e sp_retry: no result (see $WORK/sp_retry/crest.err)"
+  fi
+
+  # the CPU repeat fails too: the single point fails as an ordinary SCC failure (no crest.engrad, no GPU failure)
+  sp sp_retry_fail "$CREST" cuda CREST_ATM_GPU=1 CREST_CUDA_TEST_NOCONV=2,cpu
+  stats=$(retry_stats sp_retry_fail)
+  if [[ ! -s $WORK/sp_retry_fail/crest.engrad && $stats == *' solves 1 cpu_solved 0 cpu_failed 1'* ]] && ! gpu_failed sp_retry_fail; then
+    ok "3f sp_retry_fail: ${stats#CREST_CUDA_CPU_RETRY_STATS }; ordinary failure, no GPU failure"
+  else
+    bad "3f sp_retry_fail: ${stats:-no STATS line} (see $WORK/sp_retry_fail)"
+  fi
+
   search() {  # search <dir> [env...]
     local d=$WORK/$1; shift
     rm -rf "$d"; mkdir -p "$d"; cp "$MOL" "$d/mol.xyz"; toml imtd-gc cuda "$T" > "$d/search.toml"
@@ -125,6 +156,16 @@ if [[ $GPU == 1 ]]; then
     ok "4 search: normal termination in $(( $(date +%s) - t0 )) s, $(grep -c '' "$WORK/search/crest_conformers.xyz" 2>/dev/null) conformer-file lines"
   else
     bad "4 search (see $WORK/search/crest.out)"
+  fi
+
+  # one GPU eigensolve inside the search fails on the GPU and on the CPU: that MD ends early, as in conventional CREST,
+  # and the search must still end normally
+  t0=$(date +%s)
+  if search search_retry_fail CREST_CUDA_TEST_NOCONV=5000,cpu && \
+     [[ $(retry_stats search_retry_fail) == *' cpu_failed 1'* ]] && ! gpu_failed search_retry_fail; then
+    ok "4b search_retry_fail: normal termination in $(( $(date +%s) - t0 )) s; $(grep -c 'terminated EARLY' "$WORK/search_retry_fail/crest.out") MD(s) ended early"
+  else
+    bad "4b search_retry_fail: $(retry_stats search_retry_fail) (see $WORK/search_retry_fail/crest.out)"
   fi
 
   if [[ -n $DIST ]]; then

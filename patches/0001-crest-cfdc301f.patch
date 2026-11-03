@@ -4322,7 +4322,7 @@ diff -ruN a/src/calculator/calculator.F90 b/src/calculator/calculator.F90
 diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/crest_cuda_bridge.cpp
 --- a/src/calculator/cuda/crest_cuda_bridge.cpp
 +++ b/src/calculator/cuda/crest_cuda_bridge.cpp
-@@ -0,0 +1,1275 @@
+@@ -0,0 +1,1349 @@
 +// SPDX-License-Identifier: LGPL-3.0-or-later
 +#include "crest_cuda_bridge.h"
 +
@@ -4619,6 +4619,57 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +}
 +
 +namespace {
++
++// A positive devInfo of sygvd is LAPACK's info: the eigenproblem did not converge (info <= n) or S is not positive
++// definite (info > n). It is a numerical result of one solve, not a device fault: the session stays usable, and the
++// caller repeats the solve on the CPU (tblite_gpu_solver.F90), as conventional CREST would compute it.
++bool numerical(const crest_cuda_error &e) noexcept {
++    return e.status == CREST_CUDA_DEVICE_INFO_ERROR && e.stage == CREST_CUDA_STAGE_DEVICE_INFO && e.device_info > 0 &&
++        e.secondary_count == 0;
++}
++
++// CPU repeats of such solves (crest_cuda_note_cpu_retry): totals at exit, the first 20 one by one.
++std::atomic<unsigned long long> retry_solved{0};
++std::atomic<unsigned long long> retry_failed{0};
++std::atomic<int> retry_lines{0};
++
++void cpu_retry_atexit() {
++    std::fprintf(stderr, "CREST_CUDA_CPU_RETRY_STATS solves %llu cpu_solved %llu cpu_failed %llu\n",
++                 retry_solved.load() + retry_failed.load(), retry_solved.load(), retry_failed.load());
++}
++
++// Test only (CREST_CUDA_TEST_NOCONV=k or k,cpu; read once per process, see crest_cuda_bridge.h).
++struct TestNoconv {
++    unsigned long long k = 0;
++    bool cpu = false;
++};
++
++const TestNoconv &test_noconv() noexcept {
++    static const TestNoconv t = []() noexcept {
++        TestNoconv r;
++        const char *v = std::getenv("CREST_CUDA_TEST_NOCONV");
++        if (v && *v) {
++            char *end = nullptr;
++            r.k = std::strtoull(v, &end, 10);
++            r.cpu = end && std::strcmp(end, ",cpu") == 0;
++            std::fprintf(stderr, "CREST_CUDA_TEST_NOCONV solve %llu%s\n", r.k, r.cpu ? ", its CPU repeat fails too" : "");
++        }
++        return r;
++    }();
++    return t;
++}
++
++std::atomic<unsigned long long> test_solves{0};
++
++// True for the k-th GPU eigensolve when CREST_CUDA_TEST_NOCONV=k; it then reports devInfo n without running.
++bool test_noconv_now(Session &s, int n, crest_cuda_error &e) noexcept {
++    const TestNoconv &t = test_noconv();
++    if (!t.k || test_solves.fetch_add(1, std::memory_order_relaxed) + 1 != t.k) return false;
++    record(e, CREST_CUDA_DEVICE_INFO_ERROR, CREST_CUDA_STAGE_DEVICE_INFO, n);
++    ++s.stats.failed_solves;
++    s.error = e;
++    return true;
++}
 +
 +/* The standard path: one cusolverDnDsygvd call (type 1, upper triangle). crest_cuda_solve below runs it unless the
 + * opt-in warm-started Jacobi path answered. */
@@ -5198,9 +5249,31 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +                                 const double *smat, double *eval) noexcept {
 +    if (!handle) return CREST_CUDA_INVALID_ARGUMENT;
 +    Session &s = *static_cast<Session *>(handle);
++    crest_cuda_error t{};
++    if (test_noconv_now(s, n, t)) return t.status;
 +    if (warmjacobi_on() && warm_solve(s, n, hmat, smat, eval) == kWarmDone) return s.error.status;
 +    return stock_solve(s, n, hmat, smat, eval);
 +}
++
++extern "C" int crest_cuda_error_numerical(const crest_cuda_error *error) noexcept {
++    return error && numerical(*error) ? 1 : 0;
++}
++
++extern "C" void crest_cuda_note_cpu_retry(int route, int n, int gpu_info, int cpu_info) noexcept {
++    static const bool registered = [] { return std::atexit(cpu_retry_atexit) == 0; }();
++    (void)registered;
++    (cpu_info == 0 ? retry_solved : retry_failed).fetch_add(1, std::memory_order_relaxed);
++    if (retry_lines.fetch_add(1, std::memory_order_relaxed) < 20)
++        std::fprintf(stderr, "CREST_CUDA_CPU_RETRY %s n %d gpu_info %d cpu_info %d: %s\n", route == 2 ? "scc" : "solve",
++                     n, gpu_info, cpu_info,
++                     cpu_info == 0 ? "solved on the CPU (LAPACK dsygvd)"
++                                   : "LAPACK dsygvd failed too; this calculation fails as in conventional CREST");
++}
++
++extern "C" int crest_cuda_test_cpu_fail(void) noexcept {
++    return test_noconv().cpu ? 1 : 0;
++}
++
 +
 +extern "C" int crest_cuda_density(void *handle, int n, const double *coeff,
 +                                   const double *focc, double *pmat) noexcept {
@@ -5341,8 +5414,9 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +        !out.cleanup_failures && !out.drain_failures;
 +}
 +
++// The numerical sygvd result (numerical(), a positive devInfo) is returned to the caller but taints nothing.
 +void taint(Lease &lease, const crest_cuda_error &error) noexcept {
-+    if (!error.status) return;
++    if (!error.status || numerical(error)) return;
 +    if (!lease.tainted) {
 +        lease.tainted = true;
 +        ++lease.worker->receipt.tainted_leases;
@@ -5601,7 +5675,7 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 diff -ruN a/src/calculator/cuda/crest_cuda_bridge.h b/src/calculator/cuda/crest_cuda_bridge.h
 --- a/src/calculator/cuda/crest_cuda_bridge.h
 +++ b/src/calculator/cuda/crest_cuda_bridge.h
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,245 @@
 +// SPDX-License-Identifier: LGPL-3.0-or-later
 +#ifndef CREST_CUDA_BRIDGE_H
 +#define CREST_CUDA_BRIDGE_H
@@ -5710,9 +5784,31 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.h b/src/calculator/cuda/crest_
 + * On success H is replaced by the full eigenvector matrix; S is unchanged.
 + * H, S and eval must refer to non-overlapping host arrays of adequate size.
 + * Outputs are valid ONLY on return 0. The call completes before returning.
++ * A positive devInfo (status DEVICE_INFO_ERROR, stage DEVICE_INFO) is LAPACK's
++ * info of sygvd: the eigenproblem did not converge (info <= n) or S is not
++ * positive definite (info > n). That is a numerical result of this one solve,
++ * not a device fault: H is unchanged, the session stays usable and a lease is
++ * not tainted by it (crest_cuda_error_numerical); the caller may repeat the
++ * solve on the CPU.
 + */
 +int crest_cuda_solve(void *handle, int n, double *hmat,
 +                     const double *smat, double *eval) CREST_CUDA_NOEXCEPT;
++
++/* 1 for the numerical sygvd result described at crest_cuda_solve (positive
++ * devInfo and no later error), else 0. */
++int crest_cuda_error_numerical(const crest_cuda_error *error) CREST_CUDA_NOEXCEPT;
++
++/* Count one CPU repeat of a solve that ended with that numerical result:
++ * route 1 for crest_cuda_solve; cpu_info is LAPACK's info (0: solved on the
++ * CPU). The first 20 are printed as CREST_CUDA_CPU_RETRY lines on stderr, the
++ * totals as CREST_CUDA_CPU_RETRY_STATS at exit. */
++void crest_cuda_note_cpu_retry(int route, int n, int gpu_info, int cpu_info) CREST_CUDA_NOEXCEPT;
++
++/* Test only. CREST_CUDA_TEST_NOCONV=k: the k-th GPU eigensolve of the process
++ * (counted over all threads) reports devInfo n without running, as a solve
++ * that did not converge. CREST_CUDA_TEST_NOCONV=k,cpu: its CPU repeat is
++ * reported as failed too; this returns 1 then, else 0. */
++int crest_cuda_test_cpu_fail(void) CREST_CUDA_NOEXCEPT;
 +
 +/* Full FP64 P = (C * diag(focc)) * transpose(C), including both triangles.
 + * coeff/pmat are n-by-n contiguous column-major host matrices; focc contains n
@@ -5800,7 +5896,8 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.h b/src/calculator/cuda/crest_
 + * independent uncached storage and stream. Input values are never cached.
 + * All calls/lifetimes of one lease must be serialized on its opening host
 + * thread. Operation errors taint the lease and scope permanently; later calls
-+ * cannot clear them. Errors are reported through mandatory PODs.
++ * cannot clear them. The numerical sygvd result (crest_cuda_error_numerical)
++ * is returned but taints neither. Errors are reported through mandatory PODs.
 + * Lease handles are distinct from Session handles: use only lease APIs.
 + */
 +int crest_cuda_lease_acquire_ex(int n, int configuration, void **lease,
@@ -6093,13 +6190,15 @@ diff -ruN a/src/calculator/tblite_api.F90 b/src/calculator/tblite_api.F90
 diff -ruN a/src/calculator/tblite_gpu_solver.F90 b/src/calculator/tblite_gpu_solver.F90
 --- a/src/calculator/tblite_gpu_solver.F90
 +++ b/src/calculator/tblite_gpu_solver.F90
-@@ -0,0 +1,466 @@
+@@ -0,0 +1,518 @@
 +! This file is part of crest.
 +! SPDX-Identifier: LGPL-3.0-or-later
 +
 +! CUDA replaces the generalized symmetric eigensolve. With
 +! WITH_TBLITE_GPU_DENSITY_EXPERIMENT the ordinary-density multiplication is overridden too.
 +! CPU Fermi filling and energy-weighted density remain the pinned operations.
++! A GPU eigensolve that does not converge (sygvd devInfo > 0) is repeated on the CPU by
++! tblite's LAPACK solver, as conventional CREST computes it (cpu_retry).
 +#if defined(WITH_TBLITE_GPU_DENSITY_EXPERIMENT) && !defined(WITH_TBLITE_GPU)
 +#error "WITH_TBLITE_GPU_DENSITY_EXPERIMENT requires WITH_TBLITE_GPU"
 +#endif
@@ -6114,6 +6213,7 @@ diff -ruN a/src/calculator/tblite_gpu_solver.F90 b/src/calculator/tblite_gpu_sol
 +  use tblite_context_solver, only: context_solver
 +  use tblite_scf_solver, only: solver_type
 +  use tblite_scf_diag, only: diag_solver_type
++  use tblite_lapack_sygvd, only: sygvd_solver, new_sygvd
 +#endif
 +  implicit none
 +  private
@@ -6240,6 +6340,19 @@ diff -ruN a/src/calculator/tblite_gpu_solver.F90 b/src/calculator/tblite_gpu_sol
 +      integer(c_int) :: status
 +    end function
 +#endif
++    function crest_cuda_error_numerical(detail) bind(C) result(numerical)
++      import :: c_int, cuda_error
++      type(cuda_error), intent(in) :: detail
++      integer(c_int) :: numerical
++    end function
++    subroutine crest_cuda_note_cpu_retry(route, n, gpu_info, cpu_info) bind(C)
++      import :: c_int
++      integer(c_int), value :: route, n, gpu_info, cpu_info
++    end subroutine
++    function crest_cuda_test_cpu_fail() bind(C) result(fail)
++      import :: c_int
++      integer(c_int) :: fail
++    end function
 +    function crest_cuda_create_ex(n, handle, detail) bind(C) result(status)
 +      import :: c_int, c_ptr, cuda_error
 +      integer(c_int), value :: n
@@ -6410,10 +6523,46 @@ diff -ruN a/src/calculator/tblite_gpu_solver.F90 b/src/calculator/tblite_gpu_sol
 +#ifndef WITH_TBLITE_GPU_PERSISTENCE_EXPERIMENT
 +      detail_status = crest_cuda_get_error(self%handle, detail)
 +#endif
++      ! not converged on the GPU: hmat and smat are unchanged, repeat on the CPU
++      if (crest_cuda_error_numerical(detail) /= 0_c_int) then
++        call cpu_retry(self, 1_c_int, hmat, smat, eval, detail%device_info, error)
++        return
++      end if
 +      call cuda_failure(error, 'solve', status, detail)
 +      return
 +    end if
 +    self%completed_solves = self%completed_solves + 1_c_int64_t
++  end subroutine
++
++  ! The GPU eigensolve did not converge (cuSOLVER sygvd devInfo gpu_info > 0; crest_cuda_error_numerical). Solve the
++  ! same H and S with tblite's LAPACK sygvd solver, the eigensolver of conventional CREST. If that fails too, error is
++  ! tblite's own: the calculation fails as in conventional CREST (an MD then ends early), and no GPU failure is
++  ! latched. route: 1 crest_cuda_solve.
++  subroutine cpu_retry(self, route, hmat, smat, eval, gpu_info, error)
++    class(cuda_diag_solver), intent(in) :: self
++    integer(c_int), intent(in) :: route, gpu_info
++    real(dp), contiguous, intent(inout) :: hmat(:, :), eval(:)
++    real(dp), contiguous, intent(in) :: smat(:, :)
++    type(error_type), allocatable, intent(out) :: error
++    type(sygvd_solver) :: lapack
++    character(len=80) :: message
++    integer :: cpu_info, k, io
++
++    if (crest_cuda_test_cpu_fail() /= 0_c_int) then
++      ! test only (CREST_CUDA_TEST_NOCONV=k,cpu): the error tblite's sygvd solver returns
++      write(message, '(a,i0)') '(sygvd) failed to solve eigenvalue problem. info=', gpu_info
++      call fatal_error(error, trim(message))
++    else
++      call new_sygvd(lapack, smat, self%nel, self%kt)
++      call lapack%solve(hmat, smat, eval, error)
++    end if
++    cpu_info = 0
++    if (allocated(error)) then
++      cpu_info = -1
++      k = index(error%message, 'info=')
++      if (k > 0) read(error%message(k+5:), *, iostat=io) cpu_info
++    end if
++    call crest_cuda_note_cpu_retry(route, int(self%ndim, c_int), gpu_info, int(cpu_info, c_int))
 +  end subroutine
 +
 +#ifdef WITH_TBLITE_GPU_DENSITY_EXPERIMENT
@@ -9172,3 +9321,41 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
  
  !========================================================================================!
  !========================================================================================!
+diff -ruN a/subprojects/gfn0/src/gfn0_gbsa.F90 b/subprojects/gfn0/src/gfn0_gbsa.F90
+--- a/subprojects/gfn0/src/gfn0_gbsa.F90
++++ b/subprojects/gfn0/src/gfn0_gbsa.F90
+@@ -49,11 +49,15 @@
+ #ifdef WITH_GBSA
+    type(TSolvInput) :: input
+    type(TSolvModel) :: model
++   character(len=:), allocatable :: solvent
+ 
++   !> trim into a variable first: gfortran 13.4 (conda-forge) leaves the deferred-length component empty when a
++   !> structure constructor gets trim() directly (CREST then stops: "solvent: '' is not parametrized")
++   solvent = trim(solv)
+    if(alpb)then
+-   input = TSolvInput(solvent=trim(solv), alpb=.true., kernel=gbKernel%p16)
++   input = TSolvInput(solvent=solvent, alpb=.true., kernel=gbKernel%p16)
+    else
+-   input = TSolvInput(solvent=trim(solv), alpb=.false., kernel=gbKernel%still)
++   input = TSolvInput(solvent=solvent, alpb=.false., kernel=gbKernel%still)
+    endif
+    call init(model, input, 0)
+    !call info(model,stdout)
+diff -ruN a/subprojects/gfnff/src/gfnff_alpb.F90 b/subprojects/gfnff/src/gfnff_alpb.F90
+--- a/subprojects/gfnff/src/gfnff_alpb.F90
++++ b/subprojects/gfnff/src/gfnff_alpb.F90
+@@ -62,8 +62,12 @@
+ #ifdef WITH_GBSA
+    type(TSolvInput) :: input
+    type(TSolvModel) :: model
++   character(len=:), allocatable :: solvent
+ 
+-   input = TSolvInput(solvent=trim(solv), alpb=.true., kernel=gbKernel%p16)
++   !> trim into a variable first: gfortran 13.4 (conda-forge) leaves the deferred-length component empty when a
++   !> structure constructor gets trim() directly (CREST then stops: "solvent: '' is not parametrized")
++   solvent = trim(solv)
++   input = TSolvInput(solvent=solvent, alpb=.true., kernel=gbKernel%p16)
+    call init(model, input, 0)
+    !call info(model,stdout)
+    call newBornModel(model, gbsa, at)

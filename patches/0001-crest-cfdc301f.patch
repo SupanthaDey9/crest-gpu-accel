@@ -3242,14 +3242,14 @@ diff -ruN a/src/algos/refine.f90 b/src/algos/refine.f90
 diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
 --- a/src/algos/search_conformers.f90
 +++ b/src/algos/search_conformers.f90
-@@ -34,12 +34,18 @@
+@@ -34,12 +34,19 @@
    use iomod
    use utilities
    use cregen_interface
 +  !>--- CREST_CKPT: replay guards, post-loop entry, trial-MTD reuse
 +  use crest_parameters, only: stderr,int64
 +  use crest_restartlog, only: trackrestart,restart_step,restart_goal_of,restart_replaying, &
-+  &                           restart_set_kind,restart_set_stage,restart_post_restore_due
++  &                           restart_set_kind,restart_set_stage,restart_post_restore_due,env_set
 +  use crest_mdckpt, only: ckpt_steps,ck_commit,itoa
    implicit none
    type(systemdata),intent(inout) :: env
@@ -3258,10 +3258,11 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
    integer :: i,j,k,l,io,ich,m
    logical :: pr,wr
 +  logical :: ldum,wbo_before  !> CREST_CKPT
++  integer :: ncre,kcre,nfound  !> CREST_CKPT: ensemble backups of this pass (FastCREST 1.1.2)
  !===========================================================!
    type(calcdata) :: calc
    type(mddata) :: mddat
-@@ -88,16 +94,34 @@
+@@ -88,16 +95,35 @@
    if (env%performMTD) then
  !>--- (optional) calculate a short 1ps test MTD to check settings
     call tim%start(1,'Trial metadynamics (MTD)')
@@ -3293,10 +3294,11 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
 +!>    'mtd' at the top of EVERY MAINLOOP pass ('post' is set at the post-loop
 +!>    entry below), so MTD steps of a later pass resume in place
 +    if (ckpt_steps() > 0) call restart_set_stage('mtd')
++    ncre = 0
      call printiter
      if (.not. start) then
  !>--- clean Dir for new iterations, but leave iteration backup files
-@@ -105,7 +129,13 @@
+@@ -105,7 +131,13 @@
        env%nreset = env%nreset + 1
      else 
  !>--- at the beginning, wipe directory clean
@@ -3310,7 +3312,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
      end if
  !===========================================================!
  !>--- Meta-dynamics loop
-@@ -118,12 +148,17 @@
+@@ -118,12 +150,17 @@
  
      nsim = -1 !>--- enambles automatic MTD setup in init routines
      call crest_search_multimd_init(env,mol,mddat,nsim)
@@ -3328,7 +3330,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
  !>--- a file called crest_dynamics.trj should have been written
      ensnam = 'crest_dynamics.trj'
  !>--- deallocate for next iteration
-@@ -137,6 +172,9 @@
+@@ -137,6 +174,9 @@
      call tim%stop(3)
      if(env%iostatus_meta .ne. 0 ) return
  
@@ -3338,11 +3340,13 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
  !>--- save the CRE under a backup name
      call checkname_xyz(crefile,atmp,str)
      call checkname_xyz('.cre',str,btmp)
-@@ -144,13 +182,17 @@
+@@ -144,13 +184,19 @@
  !>--- save cregen output
      call checkname_tmp('cregen',atmp,btmp)
      call rename('cregen.out.tmp',btmp)
 +    end if
++!>--- CREST_CKPT: iteration i of this pass leaves .cre_<i-1>.xyz for the merge after the loop
++    ncre = i
  
  !=========================================================!
  !>--- cleanup after first iteration and prepare next
@@ -3357,7 +3361,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
  !>-- remove the two extreme-value MTDs
        if (.not. env%readbias .and.  env%runver .ne. 33 .and. &
        &   env%runver .ne. 787878 ) then
-@@ -175,8 +217,21 @@
+@@ -175,8 +221,39 @@
    write (stdout,'(''           MTD Simulations done         '')')
    write (stdout,'(''========================================'')')
    write (stdout,'(1x,''Collecting ensmbles.'')')
@@ -3372,6 +3376,24 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
 +    ldum = trackrestart(env)
 +    if (restart_post_restore_due()) call restore_cre()
 +  end if
++!>--- CREST_CKPT: the live merge below needs the backup of every MTD iteration of this pass. A run that
++!>    ended with failures before FastCREST 1.1.2 deleted them in its final cleanup; a resume of it would
++!>    silently drop those conformers, so it is refused.
++  if (ckpt_steps() > 0.and..not.restart_replaying()) then
++    nfound = 0
++    do kcre = 0,ncre-1
++      write (btmp,'(a,i0,a)') '.cre_',kcre,'.xyz'
++      inquire (file=trim(btmp),exist=ldum)
++      if (ldum) nfound = nfound+1
++    end do
++    if (nfound < ncre) then
++      write (stderr,'(a)') '**ERROR** CREST_RESTART> only '//itoa(nfound)//' of the '//itoa(ncre)// &
++      &  ' MTD iterations of this cycle left their ensemble (.cre_*); this resume would drop the others. '// &
++      &  'Start the search again in a new folder.'
++      if (.not.env_set('CREST_RESUME_FORCE')) error stop 3
++      write (stderr,'(a)') '**WARNING** CREST_RESTART> CREST_RESUME_FORCE is set, continuing without them'
++    end if
++  end if
  !>-- collecting all ensembles saved as ".cre_*.xyz"
 -  call collectcre(env)                      
 +!>   (CREST_CKPT: not while passing through an earlier post-loop in replay)
@@ -3380,7 +3402,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
    call newcregen(env,0)
    call checkname_xyz(crefile,atmp,btmp)
  !>--- remaining number of structures
-@@ -202,9 +257,11 @@
+@@ -202,9 +279,11 @@
  
      call elowcheck(lower,env)
      if (lower) then
@@ -3392,7 +3414,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
        cycle MAINLOOP
      end if
    end if
-@@ -220,9 +277,11 @@
+@@ -220,9 +299,11 @@
        call confg_chk3(env)
        call elowcheck(lower,env)
        if (lower) then
@@ -3404,7 +3426,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
          if (env%iterativeV2) cycle MAINLOOP
        end if
      end if
-@@ -254,10 +313,310 @@
+@@ -254,10 +335,310 @@
  !>--- print CREGEN results and clean up Directory a bit
      write (stdout,'(/)')
      call smallhead('Final Ensemble Information')
@@ -3715,7 +3737,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
  end subroutine crest_search_imtdgc
  
  !========================================================================================!
-@@ -308,6 +667,7 @@
+@@ -308,6 +689,7 @@
    use utilities
    use crest_restartlog
    use parallel_interface
@@ -3723,7 +3745,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
    implicit none
    type(systemdata) :: env 
    character(len=*),intent(in) :: ensnam
-@@ -391,9 +751,21 @@
+@@ -391,9 +773,21 @@
       !>--- run parallel optimizations
         call crest_oloop(env,nat,nall,at,xyz,eread,dump)
         deallocate(eread,at,xyz)
@@ -3745,7 +3767,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
       !>--- check for empty ensemble content
         call rdensembleparam(trim(inpnam),nat,nall)
         if (nall .lt. 1) then
-@@ -406,6 +778,7 @@
+@@ -406,6 +800,7 @@
       !==========================================================!
       !>-- dedicated ensemble refinement step (overwrites inpnam)
        call  crest_refine(env,trim(inpnam))
@@ -3753,7 +3775,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
       !==========================================================!
  
       !>--- CREGEN sorting
-@@ -497,6 +870,9 @@
+@@ -497,6 +892,9 @@
    use strucrd
    use dynamics_module
    use shake_module
@@ -3763,7 +3785,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
    implicit none
    type(systemdata),intent(inout) :: env
    character(len=*),intent(in) :: ensnam
-@@ -514,6 +890,23 @@
+@@ -514,6 +912,23 @@
    real(wp) :: temp,newtemp
    character(len=80) :: atmp
    
@@ -3787,7 +3809,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
  !>--- coord setup
    call env%ref%to(mol)
    call rdensembleparam(ensnam,nat,nall)
-@@ -528,6 +921,7 @@
+@@ -528,6 +943,7 @@
    nstrucs = min(nall, env%nrotammds)
    nsim = nstrucs * env%temps 
    call crest_search_multimd_init(env,mol,mddat,nsim)
@@ -3795,7 +3817,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
    allocate (mddats(nsim), source=mddat)
    call crest_search_multimd_init2(env,mddats,nsim)
  !>--- adjust T's and runtimes
-@@ -586,10 +980,14 @@
+@@ -586,10 +1002,14 @@
    use crest_data
    use iomod
    use utilities
@@ -3810,7 +3832,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
    character(len=128) :: inpnam,outnam,refnam
    character(len=512) :: thispath,tmppath
    logical :: multilevel(6)
-@@ -612,8 +1010,16 @@
+@@ -612,8 +1032,16 @@
  
  !>-- call the crossing routine
      call checkname_xyz(crefile,refnam,tmppath)
@@ -3828,7 +3850,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
      if (imax .lt. 1) then
        call remove(trim(tmppath))
        return
-@@ -639,5 +1045,3 @@
+@@ -639,5 +1067,3 @@
      enddo
    end do
  end subroutine crest_newcross3
@@ -4338,7 +4360,7 @@ diff -ruN a/src/calculator/calculator.F90 b/src/calculator/calculator.F90
 diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/crest_cuda_bridge.cpp
 --- a/src/calculator/cuda/crest_cuda_bridge.cpp
 +++ b/src/calculator/cuda/crest_cuda_bridge.cpp
-@@ -0,0 +1,1952 @@
+@@ -0,0 +1,1967 @@
 +// SPDX-License-Identifier: LGPL-3.0-or-later
 +#include "crest_cuda_bridge.h"
 +#include "crest_cuda_scc.h"
@@ -4667,11 +4689,18 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +                 retry_solved.load() + retry_failed.load(), retry_solved.load(), retry_failed.load());
 +}
 +
-+// Test only (CREST_CUDA_TEST_NOCONV=k or k,cpu; read once per process, see crest_cuda_bridge.h).
++// Test only (CREST_CUDA_TEST_NOCONV=k, k,cpu or k,fault; read once per process, see crest_cuda_bridge.h). While the
++// variable is set (k = 0: count only), the GPU eigensolves are counted and the count is printed at exit.
 +struct TestNoconv {
++    bool set = false;
 +    unsigned long long k = 0;
-+    bool cpu = false;
++    bool cpu = false;    // ,cpu: the CPU repeat of the k-th solve fails too
++    bool fault = false;  // ,fault: the k-th solve reports a CUDA error (a device fault) instead
 +};
++
++std::atomic<unsigned long long> test_solves{0};
++
++void test_noconv_atexit() { std::fprintf(stderr, "CREST_CUDA_TEST_NOCONV solves %llu\n", test_solves.load()); }
 +
 +const TestNoconv &test_noconv() noexcept {
 +    static const TestNoconv t = []() noexcept {
@@ -4679,22 +4708,30 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 +        const char *v = std::getenv("CREST_CUDA_TEST_NOCONV");
 +        if (v && *v) {
 +            char *end = nullptr;
++            r.set = true;
 +            r.k = std::strtoull(v, &end, 10);
 +            r.cpu = end && std::strcmp(end, ",cpu") == 0;
-+            std::fprintf(stderr, "CREST_CUDA_TEST_NOCONV solve %llu%s\n", r.k, r.cpu ? ", its CPU repeat fails too" : "");
++            r.fault = end && std::strcmp(end, ",fault") == 0;
++            std::atexit(test_noconv_atexit);
++            std::fprintf(stderr, "CREST_CUDA_TEST_NOCONV solve %llu%s\n", r.k,
++                         r.cpu ? ", its CPU repeat fails too" : (r.fault ? " reports a CUDA error" : ""));
 +        }
 +        return r;
 +    }();
 +    return t;
 +}
 +
-+std::atomic<unsigned long long> test_solves{0};
-+
-+// True for the k-th GPU eigensolve when CREST_CUDA_TEST_NOCONV=k; it then reports devInfo n without running.
++// The k-th GPU eigensolve when CREST_CUDA_TEST_NOCONV=k: it reports devInfo n (with ,fault: a CUDA runtime error)
++// without running.
 +bool test_noconv_now(Session &s, int n, crest_cuda_error &e) noexcept {
 +    const TestNoconv &t = test_noconv();
-+    if (!t.k || test_solves.fetch_add(1, std::memory_order_relaxed) + 1 != t.k) return false;
-+    record(e, CREST_CUDA_DEVICE_INFO_ERROR, CREST_CUDA_STAGE_DEVICE_INFO, n);
++    if (!t.set) return false;
++    const unsigned long long c = test_solves.fetch_add(1, std::memory_order_relaxed) + 1;
++    if (!t.k || c != t.k) return false;
++    if (t.fault)
++        record(e, CREST_CUDA_RUNTIME_ERROR, CREST_CUDA_STAGE_SOLVE, 999);  // cudaErrorUnknown
++    else
++        record(e, CREST_CUDA_DEVICE_INFO_ERROR, CREST_CUDA_STAGE_DEVICE_INFO, n);
 +    ++s.stats.failed_solves;
 +    s.error = e;
 +    return true;
@@ -6294,7 +6331,7 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.cpp b/src/calculator/cuda/cres
 diff -ruN a/src/calculator/cuda/crest_cuda_bridge.h b/src/calculator/cuda/crest_cuda_bridge.h
 --- a/src/calculator/cuda/crest_cuda_bridge.h
 +++ b/src/calculator/cuda/crest_cuda_bridge.h
-@@ -0,0 +1,275 @@
+@@ -0,0 +1,278 @@
 +// SPDX-License-Identifier: LGPL-3.0-or-later
 +#ifndef CREST_CUDA_BRIDGE_H
 +#define CREST_CUDA_BRIDGE_H
@@ -6424,9 +6461,12 @@ diff -ruN a/src/calculator/cuda/crest_cuda_bridge.h b/src/calculator/cuda/crest_
 +void crest_cuda_note_cpu_retry(int route, int n, int gpu_info, int cpu_info) CREST_CUDA_NOEXCEPT;
 +
 +/* Test only. CREST_CUDA_TEST_NOCONV=k: the k-th GPU eigensolve of the process
-+ * (counted over all threads, crest_cuda_solve and scc_step) reports devInfo n
-+ * without running, as a solve that did not converge. CREST_CUDA_TEST_NOCONV=k,cpu:
-+ * its CPU repeat is reported as failed too; this returns 1 then, else 0. */
++ * (counted over all threads) reports devInfo n without running, as a solve
++ * that did not converge. CREST_CUDA_TEST_NOCONV=k,cpu: its CPU repeat is
++ * reported as failed too; this returns 1 then, else 0. k,fault: the k-th solve
++ * reports a CUDA error instead (a device fault: the run stops with failures).
++ * While the variable is set (k = 0: count only), the number of GPU
++ * eigensolves is printed at exit (CREST_CUDA_TEST_NOCONV solves N). */
 +int crest_cuda_test_cpu_fail(void) CREST_CUDA_NOEXCEPT;
 +
 +/* Full FP64 P = (C * diag(focc)) * transpose(C), including both triangles.
@@ -7706,6 +7746,31 @@ diff -ruN a/src/calculator/tblite_gpu_solver.F90 b/src/calculator/tblite_gpu_sol
 +  end subroutine
 +#endif
 +end module crest_tblite_gpu_solver
+diff -ruN a/src/crest_main.f90 b/src/crest_main.f90
+--- a/src/crest_main.f90
++++ b/src/crest_main.f90
+@@ -25,6 +25,7 @@
+   use crest_parameters !> Datatypes and constants
+   use crest_data !> module for the main data storage (imports systemdata and timer)
+   use crest_restartlog 
++  use crest_mdckpt, only: ckpt_steps
+     USE, INTRINSIC :: IEEE_EXCEPTIONS
+   implicit none
+   type(systemdata) :: env  !> MAIN STORAGE OF SYSTEM DATA
+@@ -360,7 +361,13 @@
+ 
+ !=========================================================================================!
+ !> one final cleanup
++!> (CREST_CKPT: a run that ends with failures keeps its files, as a killed run does, so that it can be
++!>  resumed; the cleanup would delete the per-iteration ensembles .cre_* that a resume merges)
++  if (ckpt_steps() > 0 .and. env%iostatus_meta /= status_normal) then
++    write (stdout,'(a)') 'CREST_CKPT> the run ended with failures: its files are kept for a resume'
++  else
+   call custom_cleanup(env)
++  end if
+ 
+ !=========================================================================================!
+ !> Evaluate and print timings, then stop the program
 diff -ruN a/src/cuda_atm/crest_atm_gpu.cu b/src/cuda_atm/crest_atm_gpu.cu
 --- a/src/cuda_atm/crest_atm_gpu.cu
 +++ b/src/cuda_atm/crest_atm_gpu.cu
@@ -9638,6 +9703,49 @@ diff -ruN a/src/dynamics/meson.build b/src/dynamics/meson.build
    'dynamics_module.f90',
    'metadynamics_module.f90',
    'shake_module.f90',
+diff -ruN a/src/entropy/thermocalc.f90 b/src/entropy/thermocalc.f90
+--- a/src/entropy/thermocalc.f90
++++ b/src/entropy/thermocalc.f90
+@@ -535,6 +535,9 @@
+   mol%xyz = xyz*aatoau
+ 
+   do i = 1,calctmp%ncalculations
++    !> FastCREST: no GPU scope is open for these Hessians, so they use the CPU tblite solver, as optimization
++    !> passes do (the GPU route would refuse every call and leave the thermochemistry undefined)
++    calctmp%calcs(i)%tblite_solver = 0
+     write (atmp,'(".",i0)') i
+     if (subdir) then
+       calctmp%calcs(i)%calcspace = trim(dirname)
+@@ -638,6 +641,13 @@
+   integer :: i,j,k,ich,io,popf,ii,T,Tn
+   logical :: ex
+   logical :: niceprint
++  !> FastCREST: the Hessians run the CPU three-body term, as optimization passes do (C ABI of crest_atm_gpu.cu)
++  interface
++    subroutine crest_atm_gpu_force(mode) bind(C,name='crest_atm_gpu_force')
++      use iso_c_binding,only:c_int
++      integer(c_int),value :: mode
++    end subroutine crest_atm_gpu_force
++  end interface
+   real(wp) :: percent
+   character(len=52) :: bar
+   integer :: ncalc,vz,nlimit,nav
+@@ -761,6 +771,7 @@
+   avbhess = env%thermo%avbhess
+   write (stdout,'(1x,a,i0,a)') 'Running ',ncalc,' calculations ...'
+   call crest_oloop_pr_progress(env,ncalc,0)
++  call crest_atm_gpu_force(0)
+ !$omp parallel &
+ !$omp shared( vz,tmppath,ncalc,percent,k,bar,niceprint) &
+ !$omp shared( env,nat,at,xyz,c0,et,ht,gt,stot,temps,nt,gatt,satt,avbhess,pindex )
+@@ -797,6 +808,7 @@
+ !$omp taskwait
+ !$omp end single
+ !$omp end parallel
++  call crest_atm_gpu_force(-1)  !> back to CREST_ATM_GPU
+   call crest_oloop_pr_progress(env,ncalc,-1)
+   call chdir(thispath)
+   if (.not.env%keepModef) call rmrf('HESSIANS')
 diff -ruN a/src/legacy_algos/confscript2_misc.f90 b/src/legacy_algos/confscript2_misc.f90
 --- a/src/legacy_algos/confscript2_misc.f90
 +++ b/src/legacy_algos/confscript2_misc.f90
@@ -9878,7 +9986,7 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
  !>--- routines/functions
    public :: trackrestart
    public :: restart_save_env
-@@ -61,6 +80,11 @@
+@@ -61,6 +80,12 @@
  
    public :: dump_restart,read_restart
  
@@ -9886,11 +9994,12 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
 +  public :: restart_step,restart_goal_of,restart_replaying
 +  public :: restart_set_kind,restart_set_stage
 +  public :: restart_decision,restart_post_restore_due
++  public :: env_set
 +
  !========================================================================================!
  !========================================================================================!
  contains !> MODULE PROCEDURES START HERE
-@@ -77,10 +101,32 @@
+@@ -77,10 +102,32 @@
      implicit none
      logical :: skip
      type(systemdata),intent(in),optional :: env
@@ -9923,7 +10032,7 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
      if (restart_tracker < restart_goal) skip = .true.
      if (.not.skip.and.present(env)) then
        call restart_save_env(env)
-@@ -105,7 +151,8 @@
+@@ -105,7 +152,8 @@
       real(wp),intent(in) :: xyz(3,nat,nall)
       character(len=*),intent(in) :: comments(nall)
  
@@ -9933,7 +10042,7 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
        call restart_save_ensemble(fname,nat,nall,at,xyz,comments)
      if (debug) write (stdout,*) '%%% RESTART_ENSEMBLE = ',trim(fname)
      endif
-@@ -124,7 +171,8 @@
+@@ -124,7 +172,8 @@
       real(wp),intent(in) :: eread(nall)
       character(len=50),allocatable  :: comments(:)
       integer :: i
@@ -9943,7 +10052,7 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
        allocate(comments(nall))
        do i=1,nall
          write(comments(i),*) eread(i)
-@@ -201,15 +249,42 @@
+@@ -201,15 +250,42 @@
  
    subroutine dump_restart()
      implicit none
@@ -9989,7 +10098,7 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
      write (ich) restart_tracker
      if (debug) write (stdout,*) '%%% RESTART_TRACKER =',restart_tracker
  
-@@ -244,8 +319,25 @@
+@@ -244,8 +320,25 @@
      if (debug) write (stdout,'(1x,a,a)') '%%% ensemble: ',trim(last_file)
      if (debug) write (stdout,*) '%%% nall: ',last_nall
  
@@ -10016,7 +10125,7 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
  
    subroutine dump_last_ensemble(ich)
  !******************************************
-@@ -277,25 +369,71 @@
+@@ -277,25 +370,71 @@
  !> read from binary subroutines
  
    subroutine read_restart(env)
@@ -10093,7 +10202,7 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
      write(stdout,'(/,a)') '**WARNING**'
      write(stdout,'(1x,a)') "It is a user responsibility to re-use an identical job setup,"
      write(stdout,'(1x,a)') 'either via cmd or input file. The restart option only tracks'
-@@ -339,19 +477,40 @@
+@@ -339,19 +478,40 @@
      call move_alloc(xyz, env%ref%xyz)
       
  
@@ -10136,7 +10245,7 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
  
    subroutine read_last_ensemble(ich)
  !******************************************
-@@ -425,6 +584,181 @@
+@@ -425,6 +585,181 @@
       last_xyz(:,:,:) = xyz(:,:,:)
       last_comments(:) = comments(:)
    end subroutine restart_save_ensemble

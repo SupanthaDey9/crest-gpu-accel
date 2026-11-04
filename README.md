@@ -65,6 +65,7 @@ tests/run_tests.sh bin/crest                  # on a GPU node: single points (CP
 - **Build time.** On Nova a clean build took 5 to 7 minutes on 8 cores.
 - **No internet on the build node:** run `./build.sh --fetch-only SRC` on a login node, then `./build.sh --sources SRC`.
 - **Specific libraries:** choose installations with `--cuda DIR` and `--openblas /path/libopenblas.so`.
+- **Updating.** Build a new version in a new folder and submit new jobs from there (or set `REPO`). Do not rebuild in a folder whose binary running jobs use: `build.sh` overwrites `bin/crest`, which can crash a search running from that file on a network file system, and the worker jobs of running searches refuse a binary whose checksum differs from the main job's.
 - **Other test modes:** `tests/run_tests.sh bin/crest --no-gpu` runs only the CPU single point (for example on a login node).
   `--dist "<sbatch options>"` also runs the short search with Slurm worker jobs; run it once before your first full search.
 - **Scope of the tests.** `run_tests.sh` uses a 12-atom test molecule. It checks that the build works on your machine (GPU single point equal to the CPU single point to 1e-8 Eh, the three-body kernel ran on the GPU without falling back to the CPU, searches finish). It does not repeat the validation of `docs/VALIDATION.md`.

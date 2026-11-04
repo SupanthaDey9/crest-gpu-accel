@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below, and also cite the CREST papers listed under references."
 title: "FastCREST: faster CREST conformer searches with one GPU and distributed optimization passes"
-version: 1.1.1
-date-released: 2026-11-03
+version: 1.1.2
+date-released: 2026-11-04
 license:
   - LGPL-3.0-or-later
   - Apache-2.0

@@ -19,13 +19,20 @@
 #               and is repeated on the CPU (LAPACK); must match test 1 likewise, with one CPU repeat and no GPU failure
 #   3f sp_retry_fail  the same with CREST_CUDA_TEST_NOCONV=2,cpu (the CPU repeat fails too): the single point must
 #               fail as an ordinary SCC failure, as in conventional CREST, not as a GPU failure
+#   3h thermo     Hessian thermochemistry (--rrhoav, as in the entropy mode) with the GPU route selected: its
+#               Hessians use the CPU route, so the result must be finite and byte-identical to the CPU solver's
 #   4 search    --quick iMTD-GC search on one machine with the GPU route and checkpoints: must end normally
 #   4b search_retry_fail  test 4 with CREST_CUDA_TEST_NOCONV=5000,cpu: one GPU eigensolve fails on the GPU and the
 #               CPU, so that MD ends early as in conventional CREST; the search must still end normally
+#   4c resume_after_failure  test 4 with a CUDA error injected halfway (CREST_CUDA_TEST_NOCONV=k,fault): the run ends
+#               with failures but keeps its files; the resume must end normally and merge the ensembles of all MTD
+#               iterations of its cycle (its conformer file is compared with test 4's for information only)
+#   4d resume_guard  that failed folder without its ensemble backups (.cre_*, as runs before 1.1.2 left it): the
+#               resume must be refused with exit code 3
 #   5 dist      the same search with CREST_DIST_OLOOP (optimization passes as Slurm array jobs)
 set -uo pipefail
 
-[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,25p' "$0"; exit 0; }
+[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,31p' "$0"; exit 0; }
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CREST=$(realpath "${1:?usage: run_tests.sh CREST [options]}") || exit 64; shift
 REF=''; DIST=''; WENV=$HERE/../slurm/worker_env.sh; GPU=1; MOL=$HERE/../examples/smoke/struc.xyz; CHRG=0; UHF=0; WORK=$PWD/crest-tests; T=4
@@ -143,6 +150,23 @@ if [[ $GPU == 1 ]]; then
     bad "3f sp_retry_fail: ${stats:-no STATS line} (see $WORK/sp_retry_fail)"
   fi
 
+  # Hessian thermochemistry with the GPU route selected (the entropy mode's last step, here via --rrhoav on the test
+  # molecule): no GPU scope is open there, so its Hessians use the CPU route; the 298.15 K results must be finite and
+  # byte-identical to those with the CPU solver
+  thermo() {  # thermo <dir> <solver>
+    local d=$WORK/$1
+    rm -rf "$d"; mkdir -p "$d"; cp "$MOL" "$d/mol.xyz"; toml singlepoint "$2" 4 > "$d/thermo.toml"
+    ( cd "$d" && env CREST_ATM_GPU=1 "$CREST" mol.xyz --input thermo.toml --newversion --gfn2 --chrg "$CHRG" --uhf "$UHF" \
+        --alpb water -T 4 --rrhoav mol.xyz > crest.out 2> crest.err )
+    grep -E '^ +298\.15 ' "$d/crest.out"
+  }
+  tc=$(thermo thermo_cpu cpu); tg=$(thermo thermo_gpu cuda)
+  if [[ -n $tc && $tc == "$tg" ]] && ! grep -q -i -E 'nan|infinity' "$WORK/thermo_gpu/crest.out"; then
+    ok "3h thermo: GPU route selected = CPU solver at 298.15 K ($(head -1 <<< "$tc" | tr -s ' '))"
+  else
+    bad "3h thermo: CPU [$(head -1 <<< "$tc" | tr -s ' ')] GPU route [$(head -1 <<< "$tg" | tr -s ' ')] (see $WORK/thermo_gpu)"
+  fi
+
   search() {  # search <dir> [env...]
     local d=$WORK/$1; shift
     rm -rf "$d"; mkdir -p "$d"; cp "$MOL" "$d/mol.xyz"; toml imtd-gc cuda "$T" > "$d/search.toml"
@@ -152,10 +176,60 @@ if [[ $GPU == 1 ]]; then
     grep -q 'CREST terminated normally' "$d/crest.out"
   }
   t0=$(date +%s)
-  if search search; then
+  if search search CREST_CUDA_TEST_NOCONV=0 CREST_MD_SEED=20261104; then
     ok "4 search: normal termination in $(( $(date +%s) - t0 )) s, $(grep -c '' "$WORK/search/crest_conformers.xyz" 2>/dev/null) conformer-file lines"
   else
     bad "4 search (see $WORK/search/crest.out)"
+  fi
+
+  # A CUDA error halfway through test 4's GPU eigensolves stops the run with failures; with checkpoints the run keeps
+  # its files, and the resume must end normally and merge one ensemble per MTD iteration of its cycle (before 1.1.2
+  # the failed run deleted them and the resume merged only the iterations it computed itself). CREST_MD_SEED (test
+  # only) fixes the initial MD velocities, but two identical test searches are still not bitwise identical, so the
+  # conformer file is compared with test 4's for information only. The same failed folder without its per-iteration
+  # ensemble backups must be refused (exit 3) instead of silently dropping those conformers.
+  resume() {  # resume <dir>: rerun the search in place with restart = true
+    local d=$WORK/$1
+    sed -i '1i restart = true' "$d/search.toml"
+    ( cd "$d" && source "$HERE/../scripts/crest-env.sh" gpu && export OMP_NUM_THREADS=$T CREST_CKPT=40 CREST_RESUME_POST=fallback CREST_MD_SEED=20261104 && \
+      "$CREST" --input search.toml --newversion --gfn2 --chrg "$CHRG" --uhf "$UHF" --alpb water --quick --noreftopo -T "$T" \
+        >> crest.out 2>> crest.err )
+  }
+  n4=$(sed -n 's/^CREST_CUDA_TEST_NOCONV solves \([0-9]*\)$/\1/p' "$WORK/search/crest.err" | tail -1)
+  if [[ -n $n4 && $n4 -gt 1 ]]; then
+    search search_fault CREST_CUDA_TEST_NOCONV=$(( n4 / 2 )),fault CREST_MD_SEED=20261104
+    f=$WORK/search_fault
+    ncre=$(ls -a "$f" | grep -c '^\.cre_')
+    if grep -q 'CREST terminated with failures' "$f/crest.out" && grep -q 'its files are kept for a resume' "$f/crest.out"; then
+      rm -rf "$WORK/search_guard"; cp -a "$f" "$WORK/search_guard"
+      nl=$(grep -c '' "$f/crest.out")
+      resume search_fault; rc=$?
+      part=$(tail -n +$(( nl + 1 )) "$f/crest.out")
+      iters=$(sed -n '1,/Collecting ensmbles/p' <<< "$part" | grep -c 'Meta-Dynamics Iteration')
+      merged=$(grep -m1 -o 'post-loop entry snapshot: [0-9]*' <<< "$part" | awk '{print $NF}')
+      same=$(cmp -s "$f/crest_conformers.xyz" "$WORK/search/crest_conformers.xyz" && echo "identical to" || echo "differs from")
+      if [[ $rc == 0 ]] && grep -q 'CREST terminated normally' <<< "$part" && [[ -n $merged && $merged == "$iters" ]]; then
+        ok "4c resume_after_failure: fault at solve $(( n4 / 2 )) of $n4 ($ncre ensemble backups kept); resume merged $merged ensembles for $iters MTD iterations; conformer file $same test 4"
+      else
+        bad "4c resume_after_failure: resume rc $rc; merged ${merged:-none} ensembles for $iters MTD iterations (see $f)"
+      fi
+      if [[ $ncre -gt 0 ]]; then
+        g=$WORK/search_guard
+        mkdir -p "$g/moved"; mv "$g"/.cre_* "$g/moved/"
+        resume search_guard; rc=$?
+        if [[ $rc == 3 ]] && grep -q 'this resume would drop the others' "$g/crest.err"; then
+          ok "4d resume_guard: refused with exit code 3 ($(grep -m1 -o 'only [0-9]* of the [0-9]* MTD iterations' "$g/crest.err"))"
+        else
+          bad "4d resume_guard: resume rc $rc, no refusal (see $g)"
+        fi
+      else
+        echo "NOTE  4d resume_guard not run: the fault came before an MTD iteration finished (no ensemble backup yet)"
+      fi
+    else
+      bad "4c resume_after_failure: the injected fault did not end the run with failures and kept files (see $f)"
+    fi
+  else
+    bad "4c resume_after_failure: no GPU eigensolve count from test 4 (see $WORK/search/crest.err)"
   fi
 
   # one GPU eigensolve inside the search fails on the GPU and on the CPU: that MD ends early, as in conventional CREST,

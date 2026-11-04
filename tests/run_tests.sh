@@ -33,10 +33,12 @@
 #               iterations of its cycle (its conformer file is compared with test 4's for information only)
 #   4d resume_guard  that failed folder without its ensemble backups (.cre_*, as runs before 1.1.2 left it): the
 #               resume must be refused with exit code 3
+#   4e resume_later_cycle  test 4 forced into a second cycle right after a widened sort (CREST_TEST_NEWCYCLE), with a CUDA
+#               error in the first MTD iteration of that cycle: the resume must reach it and end normally
 #   5 dist      the same search with CREST_DIST_OLOOP (optimization passes as Slurm array jobs)
 set -uo pipefail
 
-[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,32p' "$0"; exit 0; }
+[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,38p' "$0"; exit 0; }
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CREST=$(realpath "${1:?usage: run_tests.sh CREST [options]}") || exit 64; shift
 REF=''; DIST=''; WENV=$HERE/../slurm/worker_env.sh; GPU=1; MOL=$HERE/../examples/smoke/struc.xyz; CHRG=0; UHF=0; WORK=$PWD/crest-tests; T=4
@@ -277,6 +279,28 @@ if [[ $GPU == 1 ]]; then
     fi
   else
     bad "4c resume_after_failure: no GPU eigensolve count from test 4 (see $WORK/search/crest.err)"
+  fi
+
+  # A resume in the first MTD iteration of a later cycle, when the sort before that cycle was widened. Before 1.2.0 it
+  # stopped with "File crest_rotamers_3.xyz is empty": the replay of the stage after the MTD loop runs one file number
+  # ahead of the live run, and the restored ensemble did not have the name read next. The test molecule never starts a
+  # second cycle by itself, so CREST_TEST_NEWCYCLE (test only) forces one; all of test 4's GPU solves come before it.
+  if [[ -n $n4 && $n4 -gt 1 ]]; then
+    search search_cycle CREST_TEST_NEWCYCLE=1 CREST_CUDA_TEST_NOCONV=$(( n4 + 5000 )),fault CREST_MD_SEED=20261104
+    f=$WORK/search_cycle
+    if grep -q 'A new lower conformer was found' "$f/crest.out" && grep -q 'CREST terminated with failures' "$f/crest.out"; then
+      nl=$(grep -c '' "$f/crest.out")
+      resume search_cycle; rc=$?
+      part=$(tail -n +$(( nl + 1 )) "$f/crest.out")
+      goal=$(grep -m1 -o 'replay reached step [0-9]* (multimd occ [0-9]*)' <<< "$part")
+      if [[ $rc == 0 ]] && [[ -n $goal ]] && grep -q 'CREST terminated normally' <<< "$part"; then
+        ok "4e resume_later_cycle: $goal, normal termination"
+      else
+        bad "4e resume_later_cycle: resume rc $rc; ${goal:-goal not reached} (see $f)"
+      fi
+    else
+      bad "4e resume_later_cycle: the forced second cycle did not end with failures (see $f)"
+    fi
   fi
 
   # one GPU eigensolve inside the search fails on the GPU and on the CPU: that MD ends early, as in conventional CREST,

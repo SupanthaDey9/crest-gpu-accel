@@ -9749,17 +9749,18 @@ diff -ruN a/src/entropy/thermocalc.f90 b/src/entropy/thermocalc.f90
 diff -ruN a/src/legacy_algos/confscript2_misc.f90 b/src/legacy_algos/confscript2_misc.f90
 --- a/src/legacy_algos/confscript2_misc.f90
 +++ b/src/legacy_algos/confscript2_misc.f90
-@@ -1027,6 +1027,9 @@
+@@ -1027,6 +1027,10 @@
    use iomod
    use strucrd,only:rdensembleparam,rdensemble
    use utilities
 +  !> CREST_CKPT: logged/replayed widening decision
-+  use crest_restartlog,only:restart_decision,restart_replaying,restart_step,restart_goal_of,trackensemble
++  use crest_restartlog,only:restart_decision,restart_replaying,restart_step,restart_goal_of,trackensemble, &
++  &                         restart_test_cycle
 +  use crest_mdckpt,only:ckpt_steps
    implicit none
  
    type(systemdata) :: env
-@@ -1034,6 +1037,12 @@
+@@ -1034,6 +1038,12 @@
    character(len=*) :: filename
    integer :: nallin,nallout,nallthr
    real(wp) :: nthr,increase
@@ -9772,7 +9773,7 @@ diff -ruN a/src/legacy_algos/confscript2_misc.f90 b/src/legacy_algos/confscript2
  
    character(len=80) :: inpnam,outnam
  
-@@ -1045,15 +1054,42 @@
+@@ -1045,18 +1055,56 @@
    call rdensembleparam(trim(filename),env%nat,nallin) !--initial number of structures
    call checkname_xyz(crefile,inpnam,outnam)
    call confg_chk3(env)
@@ -9797,7 +9798,7 @@ diff -ruN a/src/legacy_algos/confscript2_misc.f90 b/src/legacy_algos/confscript2
      nallthr = nint(float(nallin)*nthr)
 -    if (nallout .lt. nallthr) then
 +    !> CREST_CKPT: log the 5% widening decision; replay it while skipping
-+    if (restart_decision('WIDEN',nallout .lt. nallthr)) then
++    if (restart_decision('WIDEN',nallout .lt. nallthr .or. restart_test_cycle('WIDEN'))) then
        write (*,'(1x,''This is less than '',i0,''% of the initial '',i0,'' structures.'')') &
        & nint(nthr*100.0d0),nallin
        write (*,'(1x,''Increasing energy window to include more...'')')
@@ -9816,13 +9817,28 @@ diff -ruN a/src/legacy_algos/confscript2_misc.f90 b/src/legacy_algos/confscript2
 +      end if
        env%ewin = ewin*increase
        call confg_chk3(env)
-       call remaining_in(outnam,ewin*increase,nallout) !--- remaining number of structures
-@@ -1103,11 +1139,28 @@
+-      call remaining_in(outnam,ewin*increase,nallout) !--- remaining number of structures
++      !> CREST_CKPT: if this widened CREGEN is the last step before the restart goal (the first MTD of the
++      !> next cycle), only the ensemble restored at goal-1 is on disk. After a replayed post-loop stage its
++      !> name differs from outnam (collectcre is skipped, so leftover files shift the numbering by one):
++      !> skip the count, as for the first CREGEN above. The next cycle does not read this file.
++      ckgoal = .false.
++      if (ckpt_steps() > 0) then
++        if (restart_replaying() .and. restart_step() == restart_goal_of()-1) then
++          inquire (file=trim(outnam),exist=ckex)
++          ckgoal = .not.ckex
++        end if
++      end if
++      if (.not.ckgoal) call remaining_in(outnam,ewin*increase,nallout) !--- remaining number of structures
+     end if
+   end if
+ 
+@@ -1103,11 +1151,28 @@
    use crest_data
    use strucrd,only:xyz2coord
    use utilities 
 +  !> CREST_CKPT: logged/replayed elowcheck decision
-+  use crest_restartlog,only:restart_decision,restart_replaying
++  use crest_restartlog,only:restart_decision,restart_replaying,restart_test_cycle
 +  use crest_mdckpt,only:ckpt_steps
    implicit none
    type(systemdata) :: env
@@ -9846,7 +9862,15 @@ diff -ruN a/src/legacy_algos/confscript2_misc.f90 b/src/legacy_algos/confscript2
  !--- some defaults
    ethr = env%ethr  !ETHR threshold that is also used in CREGEN (=0.05 kcal/mol)
    if (env%entropic) then !except for entropy mode
-@@ -1126,12 +1179,14 @@
+@@ -1117,6 +1182,7 @@
+   lower = .false.
+ 
+   ediff = (env%eprivious-env%elowest)*autokcal
++  if (restart_test_cycle('ELOW')) ediff = max(ediff,ethr)
+   if (ediff .ge. ethr) then
+     write (*,'(1x,a)') '...............................................'
+     write (*,'(1x,a)') 'A new lower conformer was found!'
+@@ -1126,12 +1192,14 @@
      lower = .true.
      if (.not.env%allowrestart) then
        lower = .false.
@@ -9861,7 +9885,7 @@ diff -ruN a/src/legacy_algos/confscript2_misc.f90 b/src/legacy_algos/confscript2
        return
      end if
      !---- clean the dir
-@@ -1143,6 +1198,8 @@
+@@ -1143,6 +1211,8 @@
      lower = .false.
    end if
  
@@ -9993,7 +10017,7 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
 +!>--- CREST_CKPT: public additions
 +  public :: restart_step,restart_goal_of,restart_replaying
 +  public :: restart_set_kind,restart_set_stage
-+  public :: restart_decision,restart_post_restore_due
++  public :: restart_decision,restart_post_restore_due,restart_test_cycle
 +  public :: env_set
 +
  !========================================================================================!
@@ -10245,7 +10269,7 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
  
    subroutine read_last_ensemble(ich)
  !******************************************
-@@ -425,6 +585,181 @@
+@@ -425,6 +585,199 @@
       last_xyz(:,:,:) = xyz(:,:,:)
       last_comments(:) = comments(:)
    end subroutine restart_save_ensemble
@@ -10291,6 +10315,24 @@ diff -ruN a/src/restartlog.f90 b/src/restartlog.f90
 +    implicit none
 +    restart_post_restore_due = (post_restore .and. restart_tracker == restart_goal)
 +  end function restart_post_restore_due
++
++  logical function restart_test_cycle(kind)
++!***************************************************************************
++!* Test only (tests/run_tests.sh): with CREST_TEST_NEWCYCLE set, the first
++!* sort after an MTD loop widens its energy window (kind 'WIDEN') and the
++!* check after it reports a new lower conformer (kind 'ELOW'), whatever the
++!* energies, once per process. This starts a new cycle right after a
++!* widened sort. Needs CREST_CKPT > 0; replayed steps use decisions.log.
++!***************************************************************************
++    implicit none
++    character(len=*),intent(in) :: kind
++    logical,save :: used = .false.
++    restart_test_cycle = .false.
++    if (used .or. ckpt_steps() <= 0 .or. cur_stage /= 'post') return
++    if (.not.env_set('CREST_TEST_NEWCYCLE')) return
++    restart_test_cycle = .true.
++    if (kind == 'ELOW') used = .true.
++  end function restart_test_cycle
 +
 +  logical function track_due()
 +!***************************************************************************

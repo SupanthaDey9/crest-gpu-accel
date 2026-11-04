@@ -117,3 +117,13 @@ The same checks passed on 2026-10-26 and 2026-10-27 for earlier revisions of the
 | `run_tests.sh`, Nova H200 NVL (the Nova build above) | 1; 2 (bitwise identical to the 1.1.1 binary); 3, 3b, 3e, 3f, 3h; 4, 4b, 4c, 4d; 5 (distributed passes: 599 structures optimized by Slurm workers and merged, normal termination in 250 s) passed. This run used a draft of the script in which 4c also required the resumed conformer file to equal test 4's byte for byte. That failed because two seeded test searches are not bitwise identical, so the condition was dropped; 4c passes on the same output |
 | GPU single points vs 1.1.1, same H200 | Ga peptide, `-T 1`: `crest.engrad` byte-identical to the 1.1.1 binary on the GPU route and with `CREST_CUDA_WARMJACOBI=1` |
 | Failures at other points of a search, RTX PRO 5000 Blackwell | The search of test 4 with a CUDA error at 3, 10, 25, 40, 60, 75, 85, 92 and 98% of its 50,986 GPU eigensolves, then a resume. All nine failed runs kept their files. All nine resumes ended normally with the ensembles of both MTD iterations: merged after the loop for failures during the MTD iterations, restored from the post-loop snapshot for failures in the MDs after the loop. This used the 12-atom test molecule; a failure in a later cycle was not tested |
+
+### Version 1.2.0 candidate (2026-11-04): resume in a later cycle
+
+| Item | Value |
+|---|---|
+| The four searches that stopped | Replayed on copies of their folders. With the previous build all four stop with "File crest_rotamers_3.xyz is empty" (exit code 155), as they did. With the fix all four reach their target MTD batch, the identity check passes and all six trajectories resume from their checkpoints; each run was stopped after 240 s |
+| `run_tests.sh`, Nova A100 80GB PCIe | 16 of 16 passed, with new test 4e (a resume in the first MTD batch of a forced second cycle) and test 2 (bitwise identical to the previous build) |
+| `run_tests.sh`, RTX PRO 5000 Blackwell | 14 of 14 passed. A build without the fix fails only test 4e, with exit code 155 |
+| Every resume point | The search of test 4, forced into a second cycle, killed with SIGKILL at each of its 33 tracked steps, then resumed: all 33 resumes ended normally. CUDA errors at 8 points of the second cycle: all 8 resumes ended normally. This used the 12-atom test molecule, with threads, so it checks normal termination and the merged ensembles, not bitwise equality |
+| Numbers | Ga peptide, `-T 1`: CPU single point and GPU single points (GPU route, `CREST_CUDA_DEVSCC=1`, both opt-in settings) byte-identical to the previous build |

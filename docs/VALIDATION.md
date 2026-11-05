@@ -2,7 +2,7 @@
 
 All tests ran on the Nova cluster at Iowa State University. The code-level tests and the replicate searches used the 274-atom, +4 Ga peptide in ALPB water; `tests/run_tests.sh` uses the 12-atom test molecule in `examples/smoke/`. The pass criteria of the code-level tests (startup, single points, controlled MD) were fixed before the runs. The decision rule for the replicate searches was fixed after some individual results had been seen, but before any group statistic was computed.
 
-Names: **conventional CREST** means CREST without our GPU code; the **reference search** is the original 321.5 h conventional CREST search, made with the 3.0.2 release. Five configurations were compared:
+Names: **conventional CREST** means CREST without our GPU code; the **reference search** is the original 321.5 h conventional CREST search, made with the 3.0.2 release. Five configurations were compared, and the two opt-in settings as three more:
 
 | Name | What it is |
 |---|---|
@@ -11,10 +11,13 @@ Names: **conventional CREST** means CREST without our GPU code; the **reference 
 | unmodified, TOML | the same build, run from TOML input |
 | FastCREST, CPU | FastCREST with every GPU switch off |
 | FastCREST, GPU | FastCREST with `tblite_solver = "cuda"` and `CREST_ATM_GPU=1` |
+| FastCREST, Jacobi | FastCREST, GPU with `CREST_CUDA_WARMJACOBI=1` (opt-in) |
+| FastCREST, GPU-resident SCC | FastCREST, GPU with `CREST_CUDA_DEVSCC=1` (opt-in) |
+| FastCREST, both | FastCREST, GPU with both opt-in settings |
 
 ## Startup decisions
 
-Every configuration made the same decisions before the first trajectory:
+Every configuration, the opt-in settings included, made the same decisions before the first trajectory:
 
 - the same initial-optimization energies to 1e-10 Eh (first frame -415.2625315087 Eh on the release, -415.2625315088 Eh on the others);
 - the same flexibility measure (0.391);
@@ -32,6 +35,11 @@ The structures are the reference search's 135 final conformers, 50 of its MD fra
 | FastCREST, CPU vs unmodified | 0 (bitwise) | 0 |
 | FastCREST: GPU vs CPU | 3.98e-13 | 4.0e-15 |
 | FastCREST, GPU vs release | 1.01e-10 | 8.16e-11 |
+| FastCREST: Jacobi vs GPU | 3.41e-13 | 3.4e-14 |
+| FastCREST: GPU-resident SCC vs GPU | 3.41e-13 | 5.0e-15 |
+| FastCREST: both vs Jacobi | 2.84e-13 | 3.4e-14 |
+| FastCREST: Jacobi, GPU-resident SCC, both vs CPU | 3.41e-13, 4.55e-13, 4.55e-13 | 3.3e-14, 4.0e-15, 6.0e-15 |
+| FastCREST: Jacobi, GPU-resident SCC, both vs release | 1.00e-10 each | 8.16e-11 each |
 
 Criterion, fixed before the runs: max abs dE <= 1e-8 Eh and max abs dG <= 1e-6 Eh/bohr. Every comparison passes; the largest differences, to the release, are two orders of magnitude inside it.
 
@@ -52,8 +60,14 @@ Each comparison used 20 ps runs from four starts, at 400 and 500 K, with identic
 | FastCREST: GPU vs CPU | 0.000 to +0.050 | +0.008 to +0.134 |
 | FastCREST, GPU vs unmodified (command line) | -0.001 to +0.030 | +0.005 to +0.072 |
 | FastCREST, GPU vs release | -0.003 to +0.033 | -0.014 to +0.082 |
+| FastCREST: Jacobi vs GPU | -0.033 to +0.010 | -0.076 to +0.025 |
+| FastCREST, Jacobi vs release | -0.020 to +0.026 | -0.048 to +0.064 |
+| FastCREST: GPU-resident SCC vs GPU | -0.024 to +0.016 | -0.065 to +0.040 |
+| FastCREST: both vs Jacobi | -0.021 to +0.021 | -0.059 to +0.040 |
+| FastCREST, GPU-resident SCC vs release | -0.005 to +0.027 | -0.029 to +0.072 |
+| FastCREST, both vs release | -0.013 to +0.020 | -0.044 to +0.042 |
 
-Every comparison is equivalent. Three intervals after optimization exclude zero while staying inside the margin; one of them compares two CPU configurations whose single-thread forces are bitwise identical, so we read them as sampling noise.
+All 13 comparisons are equivalent. Three intervals after optimization exclude zero while staying inside the margin; one of them compares two CPU configurations whose single-thread forces are bitwise identical, so we read them as sampling noise.
 
 ## Replicate searches
 

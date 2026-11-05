@@ -22,23 +22,29 @@ FastCREST is CREST commit cfdc301f (master branch, 80 commits after v3.0.2) plus
 |---|---|---|---|---|
 | reference search: conventional CREST, 3.0.2 release, 32 threads | 321.5 h | 1.0x | 10,288 (32 threads x wall) | 0 |
 | FastCREST, 1 A100 + CPU workers | 54.3 h | 8.1x | 8,936 | 54.3 |
+| FastCREST + warm-started Jacobi eigensolver (opt-in), three searches | 36.9, 28.4, 36.8 h | 9.5x, 10.0x, 9.5x | 6,892, 5,755, 7,553 | 36.9, 28.4, 36.8 |
+| FastCREST, fastest mode (opt-in, below), two searches | 35.2, 42.7 h | 12.4x, 12.7x | 8,570, 10,496 | 35.2, 42.7 |
 
-The two searches did different amounts of work, because CREST repeats iterations until it stops finding a lower conformer; compare the throughput column. Each whole-search number in this README is a single measurement (n = 1) on the Nova cluster at Iowa State University, documented in our paper (in preparation); `docs/VALIDATION.md` covers correctness. "Conventional CREST" means CREST without our GPU code; the 321.5 h search is our reference search.
+The searches did different amounts of work, because CREST repeats iterations until it stops finding a lower conformer; compare the throughput column. Each whole-search number in this README comes from one search on the Nova cluster at Iowa State University, documented in our paper (in preparation); `docs/VALIDATION.md` covers correctness. "Conventional CREST" means CREST without our GPU code; the 321.5 h search is our reference search.
 
 ### Where the speed comes from
 
-Each change added in turn on one A100 node (EPYC 7543 host, 32 cores), one batch of six MTD trajectories per row, mean of two runs. A second A100 node gave the same within 5%.
+Each change added in turn on two A100 nodes (EPYC 7543 hosts), one batch of six MTD trajectories per run, two runs on each node; median of the four runs. The jobs had 34 cores: every row but the last used 32 of them, the last 30.
 
 | Configuration | time per MTD step | vs conventional CREST |
 |---|---|---|
-| conventional CREST (unmodified build, OpenMP defaults) | 2.61 s | 1.0x |
-| + tuned threads (`scripts/crest-env.sh`) | 1.15 s | 2.3x |
-| + rewritten loops (this build, CPU only) | 1.11 s | 2.4x |
-| + GPU eigensolve (`tblite_solver = "cuda"`) | 0.52 s | 5.0x |
-| + GPU three-body term (`CREST_ATM_GPU=1`) = FastCREST | 0.48 s | 5.4x |
-| + warm-started Jacobi eigensolver (`CREST_CUDA_WARMJACOBI=1`, opt-in) | 0.40 s | 6.5x |
+| conventional CREST (unmodified build, OpenMP defaults) | 2.63 s | 1.0x |
+| + tuned threads (`scripts/crest-env.sh`) | 1.14 s | 2.3x |
+| + rewritten loops (this build, CPU only) | 1.09 s | 2.4x |
+| + GPU eigensolve (`tblite_solver = "cuda"`) | 0.52 s | 5.1x |
+| + GPU three-body term (`CREST_ATM_GPU=1`) = FastCREST | 0.48 s | 5.5x |
+| + warm-started Jacobi eigensolver (`CREST_CUDA_WARMJACOBI=1`, opt-in) | 0.40 s | 6.6x |
+| FastCREST + GPU-resident SCC (`CREST_CUDA_DEVSCC=1`, opt-in) | 0.42 s | 6.3x |
+| + warm-started Jacobi eigensolver | 0.33 s | 7.9x |
+| + LLVM's OpenMP runtime (`CREST_LIBOMP_DIR`) | 0.32 s | 8.2x |
+| + one socket per trajectory (`scripts/crest-places.sh`, 30 threads) = fastest mode | 0.32 s | 8.3x |
 
-The thread settings matter as much as the GPU. With OpenMP defaults, tblite's parallel loops hand out one iteration at a time, and five threads per trajectory computed an energy and gradient no faster than one. The opt-in warm-started Jacobi eigensolver (`CREST_CUDA_WARMJACOBI=1`) is the fastest setting: it keeps the Cholesky factor of the overlap matrix for all SCC iterations of one energy and gradient evaluation and starts cuSOLVER's Jacobi solver from the previous iteration's eigenvectors (2.8 sweeps on average). Energies and gradients agree with the standard solver to about 1e-13 Eh. It is off by default because it was tested only on A100 GPUs, and its gain shrinks for larger molecules (1.24x at 236 atoms, 1.09x at 339 atoms over FastCREST).
+The thread settings matter as much as the GPU. With OpenMP defaults, tblite's parallel loops hand out one iteration at a time, and five threads per trajectory computed an energy and gradient no faster than one. Two opt-in settings make each step faster still. The warm-started Jacobi eigensolver (`CREST_CUDA_WARMJACOBI=1`) keeps the Cholesky factor of the overlap matrix for all SCC iterations of one energy and gradient evaluation and starts cuSOLVER's Jacobi solver from the previous iteration's eigenvectors (2.8 sweeps on average). The GPU-resident SCC (`CREST_CUDA_DEVSCC=1`) builds and solves the Hamiltonian and forms the density matrix on the GPU, so that only vectors cross the bus in each SCC iteration. With either or both, single-point energies of 306 structures agree with the CPU route, which is bitwise identical to unmodified CREST, within 4.6e-13 Eh, but not bit for bit. Both are off by default: their full validation ran on A100 GPUs, and the Jacobi gain shrinks for larger molecules (1.24x at 236 atoms, 1.09x at 339 atoms over FastCREST).
 
 ## What you need
 
@@ -96,6 +102,8 @@ $R/bin/crest --input search.toml --newversion --gfn2 --chrg 0 --uhf 0 --alpb wat
 
 To resume after an interruption, add `restart = true` as the first line of `search.toml` and start the same command again with the same `CREST_CKPT`. `crest.err` ends with a line `CREST_ATM_GPU summary gpu_calls N ...`; N > 0 means the three-body term ran on the GPU.
 
+**Fastest mode (opt-in).** Use `source $R/scripts/crest-env.sh fast` instead of `gpu`. If LLVM's OpenMP runtime is installed, set `CREST_LIBOMP_DIR` before sourcing the script. On a two-socket node with 34 or more cores, also run `eval "$($R/scripts/crest-places.sh 6 5)"` and replace `32` by `$CREST_THREADS` in `OMP_NUM_THREADS`, `threads` and `-T`.
+
 ## Run on a Slurm cluster with distributed optimization passes
 
 This is the mode behind the numbers above.
@@ -129,10 +137,13 @@ sbatch --partition=<gpu partition> --account=<account> slurm/crest_search.sbatch
 | `CREST_RESUME_POST=fallback` | environment | a resume after the MTD loop restarts the following stage from its beginning instead of stopping with exit code 3 |
 | `CREST_DIST_OLOOP=<file>` | environment | distribute optimization passes as Slurm arrays (file format in `docs/HOW_IT_WORKS.md`) |
 | `CREST_CUDA_WARMJACOBI=1` | environment | opt-in: warm-started Jacobi eigensolver instead of `dsygvd` (about 1.2x per MTD step on an A100). A non-converged Jacobi solve falls back to the standard solver within the same call; the counts are printed as `CREST_CUDA_WARMJACOBI_STATS` on stderr |
+| `CREST_CUDA_DEVSCC=1` | environment | opt-in: keep the SCC iterations on the GPU. The integrals of each energy and gradient go to the GPU once; each iteration builds the Hamiltonian there, solves it, forms the density matrix and its charge and multipole sums, and only vectors cross the bus. Works with `dsygvd` and with the Jacobi option. Open-shell calculations, and GPUs for which the build has no kernel code, keep the SCC on the host; the counts are printed as `CREST_CUDA_DEVSCC_STATS` on stderr |
+| `CREST_LIBOMP_DIR=<dir>` | environment, read by `scripts/crest-env.sh` | optional: run CREST with LLVM's OpenMP runtime, which keeps the threads of nested parallel regions alive. `<dir>` must hold LLVM's `libgomp.so.1` alias of `libomp.so`; check with `ldd bin/crest \| grep gomp` |
+| `eval "$(scripts/crest-places.sh 6 5)"` | shell, before running CREST | optional: one CPU socket per trajectory. Lists six groups of five cores, each on one socket, in `OMP_PLACES` and sets `CREST_THREADS=30`; run CREST with `-T $CREST_THREADS`. Request 34 or more cores |
 | `CREST_CUDA_MULTI_DEVICE=1` | environment | spread GPU sessions over several visible GPUs. Not recommended: two GPUs gave only 1.19x for one search, so run two searches instead |
 | `OMP_*`, `OPENBLAS_NUM_THREADS=1`, ... | `scripts/crest-env.sh` | thread layout. Keep OpenBLAS at one thread; otherwise it floods the output with "Detect OpenMP Loop" warnings |
 
-`scripts/crest-env.sh gpu` sets `CREST_ATM_GPU=1`, `CREST_OPT_SOLVER=cpu` and the thread layout.
+`scripts/crest-env.sh gpu` sets `CREST_ATM_GPU=1`, `CREST_OPT_SOLVER=cpu` and the thread layout. `scripts/crest-env.sh fast` also sets the two opt-in switches, `CREST_CUDA_DEVSCC=1` and `CREST_CUDA_WARMJACOBI=1`.
 
 **Option names.** `build.sh` sets the CMake options `WITH_TBLITE_GPU_DENSITY_EXPERIMENT` (density matrix built on the GPU) and `WITH_TBLITE_GPU_PERSISTENCE_EXPERIMENT` (per-thread GPU buffers kept between calls). Despite their names, both are required: the validated binary was built with them.
 
@@ -151,7 +162,7 @@ The MTD step is still mostly host work: in a profile of an earlier build with on
 
 The two Zen 5 rows show the GPU's own effect on the same host CPU type: about 1.9x per step.
 
-**Architectures.** The three-body kernel is compiled for sm_80 and sm_90. L40S (sm_89) runs the sm_80 code: in one job on an L40S the kernel ran without falling back to the CPU. The code-level tests did not cover L40S GPUs. To add targets, pass the full list, defaults included, for example `./build.sh --gencode "-gencode;arch=compute_80,code=sm_80;-gencode;arch=compute_90,code=sm_90;-gencode;arch=compute_120,code=sm_120"`. sm_120 needs CUDA 12.8 or newer; the tested CUDA 12.4.1 cannot compile it. Such builds have not been validated, and the value is kept in the CMake cache until you delete `build/`.
+**Architectures.** The three-body kernel and the kernels of the GPU-resident SCC (`CREST_CUDA_DEVSCC=1`) are compiled for sm_80 and sm_90. On a GPU without matching code, the three-body term falls back to the CPU and the GPU-resident SCC is not used. L40S (sm_89) runs the sm_80 code: in one job on an L40S the kernel ran without falling back to the CPU. The code-level tests did not cover L40S GPUs. To add targets, pass the full list, defaults included, for example `./build.sh --gencode "-gencode;arch=compute_80,code=sm_80;-gencode;arch=compute_90,code=sm_90;-gencode;arch=compute_120,code=sm_120"`. sm_120 needs CUDA 12.8 or newer; the tested CUDA 12.4.1 cannot compile it. Such builds have not been validated, and the value is kept in the CMake cache until you delete `build/`.
 
 **GPUs per search.** Use one GPU per search, and put several searches on a multi-GPU node.
 
@@ -160,9 +171,9 @@ The two Zen 5 rows show the GPU's own effect on the same host CPU type: about 1.
 See `docs/VALIDATION.md`. In short:
 
 - **Startup:** the decisions CREST makes before the first trajectory are identical across the 3.0.2 release, an unmodified build of cfdc301f, and FastCREST.
-- **Single points:** on 306 structures, every configuration agrees with the release binary within 1.01e-10 Eh in energy and 8.16e-11 Eh/bohr in gradient, two orders of magnitude inside the preset 1e-8 Eh criterion. FastCREST on the CPU is bitwise identical to the unmodified build; FastCREST on the GPU agrees with it to 4e-13 Eh.
+- **Single points:** on 306 structures, every configuration agrees with the release binary within 1.01e-10 Eh in energy and 8.16e-11 Eh/bohr in gradient, two orders of magnitude inside the preset 1e-8 Eh criterion. FastCREST on the CPU is bitwise identical to the unmodified build; FastCREST on the GPU agrees with it to 4e-13 Eh, and with the opt-in settings to 4.6e-13 Eh.
 - **Upstream change:** one commit between the 3.0.2 release and cfdc301f stops unconverged ANCOPT optimizations after 200 cycles. It left 2 to 3 more structures per 100 unconverged than the release, more than our preset limit of 1 per 100; we kept it (details in `docs/VALIDATION.md`).
-- **Controlled MD:** from identical starts and velocities, FastCREST on CPU and GPU, the unmodified build and the release change bonding topology in equivalent fractions of frames in all paired comparisons, within a preset margin of ±0.15 (two one-sided tests, 90% intervals).
+- **Controlled MD:** from identical starts and velocities, FastCREST on CPU and GPU, the unmodified build and the release change bonding topology in equivalent fractions of frames in all 13 paired comparisons (six of them for the opt-in settings), within a preset margin of ±0.15 (two one-sided tests, 90% intervals).
 - **Replicate searches:** 16 FastCREST searches and 17 conventional CREST searches (CPU only, unmodified numerics), all from the same input. The lowest energy after the first MTD iteration was typically 4.09 kcal/mol higher in FastCREST searches than in conventional CREST searches (Hodges-Lehmann shift; 95% interval −4.94 to +11.75 kcal/mol). The interval includes zero, so no shift was detected. The test is inconclusive: equivalence within 2 kcal/mol could not be shown, because CREST itself varies far more than that between runs on this system (interquartile range about 13 kcal/mol).
 - **Structures:** all 10 finished FastCREST searches and 13 of the 15 finished conventional CREST searches ended in compact conformers; the other two are explained under Known limitations. Median final energies were 10.5 kcal/mol (FastCREST) and 15.3 kcal/mol (conventional CREST) above the reference search. Outside the Ga site, which CREST's topology check holds fixed, both differ from the reference search mainly at the peptide termini. The lowest FastCREST conformer lies 0.7 kcal/mol above the reference search's lowest.
 - **The released code:** built from GitHub with `build.sh`, it gives a single-thread single point byte-identical to the binary validated above. `tests/site/nova/` holds the Nova jobs used for this check.
@@ -171,6 +182,7 @@ See `docs/VALIDATION.md`. In short:
 
 - **One test system:** all measurements come from one system (a 274-atom, +4 Ga peptide) with `--quick`.
 - **CREST fallback to the input geometry:** when CREST's topology check rejects every structure of one CREGEN call, CREGEN keeps the reference geometry labeled with the lowest energy seen, and the search continues from it. This is upstream CREST code (also in the 3.0.2 release). It sent 2 of our 15 finished conventional CREST searches (and none of the 10 finished FastCREST searches) back to the helical input. If `crest_best.xyz` is almost identical to your input, check `crest.out` for CREGEN calls where all structures were removed by the topology check.
+- **A new cycle keeps only the new lowest conformer (CREST itself):** when CREST finds a lower conformer after the MTD loop and starts another cycle, it carries only that conformer into the new cycle, as the start of its MTDs, not the ensemble found so far. The 3.0.2 release does the same. A final ensemble can therefore lie above the lowest conformer seen during the search; the `CREGEN> E lowest` lines in `crest.out` show the lowest energy of each stage.
 - **Resume in a later cycle (fixed in 1.2.0):** up to 1.1.2, a resume in the first MTD batch of a later cycle stopped with "File crest_rotamers_3.xyz is empty" if the sort before that cycle had widened its energy window. This happened in four searches, at their fourth or fifth MTD batch. Since 1.2.0 such a resume goes on.
 - **Open-shell metals:** in single searches of open-shell Cu and Ni peptides at these settings, most MTDs stopped early. Fe searches with the release build did the same, so we cannot tell whether FastCREST plays a part.
 - **GPU eigensolve that does not converge (fixed in 1.1.1):** up to 1.1.0, a GPU eigensolve that did not converge stopped the whole search ("CREST terminated with failures.", with `CREST CUDA solve failed; bridge status=6 stage=15` in `crest.err`). This happened in a high-spin Fe(II) peptide search. Since 1.1.1 such a solve is repeated on the CPU with LAPACK, the solver of conventional CREST, and the search goes on; if LAPACK fails too, only that MD ends early, as in conventional CREST. A search that stopped this way lost its per-iteration ensembles when it ended (see the next item), so start it again in a new folder instead of resuming it.

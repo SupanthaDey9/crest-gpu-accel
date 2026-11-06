@@ -3298,7 +3298,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
      call printiter
      if (.not. start) then
  !>--- clean Dir for new iterations, but leave iteration backup files
-@@ -105,7 +131,13 @@
+@@ -105,7 +131,14 @@
        env%nreset = env%nreset + 1
      else 
  !>--- at the beginning, wipe directory clean
@@ -3308,11 +3308,12 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
 +        call clean_V2i
 +      else
        call V2cleanup(.false.)
++      if (env_set('CREST_KEEP_ENSEMBLE')) call rmrfw('.keep_') !> CREST_KEEP_ENSEMBLE: no files of an earlier run
 +      end if
      end if
  !===========================================================!
  !>--- Meta-dynamics loop
-@@ -118,12 +150,17 @@
+@@ -118,12 +151,17 @@
  
      nsim = -1 !>--- enambles automatic MTD setup in init routines
      call crest_search_multimd_init(env,mol,mddat,nsim)
@@ -3330,7 +3331,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
  !>--- a file called crest_dynamics.trj should have been written
      ensnam = 'crest_dynamics.trj'
  !>--- deallocate for next iteration
-@@ -137,6 +174,9 @@
+@@ -137,6 +175,9 @@
      call tim%stop(3)
      if(env%iostatus_meta .ne. 0 ) return
  
@@ -3340,7 +3341,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
  !>--- save the CRE under a backup name
      call checkname_xyz(crefile,atmp,str)
      call checkname_xyz('.cre',str,btmp)
-@@ -144,13 +184,19 @@
+@@ -144,13 +185,19 @@
  !>--- save cregen output
      call checkname_tmp('cregen',atmp,btmp)
      call rename('cregen.out.tmp',btmp)
@@ -3361,7 +3362,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
  !>-- remove the two extreme-value MTDs
        if (.not. env%readbias .and.  env%runver .ne. 33 .and. &
        &   env%runver .ne. 787878 ) then
-@@ -175,8 +221,39 @@
+@@ -175,8 +222,39 @@
    write (stdout,'(''           MTD Simulations done         '')')
    write (stdout,'(''========================================'')')
    write (stdout,'(1x,''Collecting ensmbles.'')')
@@ -3402,10 +3403,14 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
    call newcregen(env,0)
    call checkname_xyz(crefile,atmp,btmp)
  !>--- remaining number of structures
-@@ -202,9 +279,11 @@
+@@ -200,13 +278,18 @@
+     call tim%stop(3)
+     if(env%iostatus_meta .ne. 0 ) return
  
++    call keep_candidate(1) !> CREST_KEEP_ENSEMBLE (opt-in): copy the newest ensemble before elowcheck deletes it
      call elowcheck(lower,env)
      if (lower) then
++      call keep_candidate(2) !> CREST_KEEP_ENSEMBLE: a new cycle starts, keep the copy as .keep_<k>.xyz
 +      if (.not.(ckpt_steps() > 0.and.restart_replaying())) then !> CREST_CKPT
        call checkname_xyz(crefile,atmp,str)
        call checkname_xyz('.cre',str,btmp)
@@ -3413,11 +3418,18 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
 +      end if
        cycle MAINLOOP
      end if
++    call keep_candidate(3) !> CREST_KEEP_ENSEMBLE: no new cycle, drop the copy
    end if
-@@ -220,9 +299,11 @@
+ 
+ !=========================================================!
+@@ -218,13 +301,18 @@
+       if(env%iostatus_meta .ne. 0 ) return
+ 
        call confg_chk3(env)
++      call keep_candidate(1) !> CREST_KEEP_ENSEMBLE (opt-in)
        call elowcheck(lower,env)
        if (lower) then
++        call keep_candidate(2) !> CREST_KEEP_ENSEMBLE
 +        if (.not.(ckpt_steps() > 0.and.restart_replaying())) then !> CREST_CKPT
          call checkname_xyz(crefile,atmp,str)
          call checkname_xyz('.cre',str,btmp)
@@ -3425,8 +3437,11 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
 +        end if
          if (env%iterativeV2) cycle MAINLOOP
        end if
++      call keep_candidate(3) !> CREST_KEEP_ENSEMBLE
      end if
-@@ -254,10 +335,310 @@
+ 
+ !==========================================================!
+@@ -254,10 +342,310 @@
  !>--- print CREGEN results and clean up Directory a bit
      write (stdout,'(/)')
      call smallhead('Final Ensemble Information')
@@ -3737,7 +3752,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
  end subroutine crest_search_imtdgc
  
  !========================================================================================!
-@@ -308,6 +689,7 @@
+@@ -308,6 +696,7 @@
    use utilities
    use crest_restartlog
    use parallel_interface
@@ -3745,7 +3760,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
    implicit none
    type(systemdata) :: env 
    character(len=*),intent(in) :: ensnam
-@@ -391,9 +773,21 @@
+@@ -391,9 +780,21 @@
       !>--- run parallel optimizations
         call crest_oloop(env,nat,nall,at,xyz,eread,dump)
         deallocate(eread,at,xyz)
@@ -3767,7 +3782,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
       !>--- check for empty ensemble content
         call rdensembleparam(trim(inpnam),nat,nall)
         if (nall .lt. 1) then
-@@ -406,6 +800,7 @@
+@@ -406,6 +807,7 @@
       !==========================================================!
       !>-- dedicated ensemble refinement step (overwrites inpnam)
        call  crest_refine(env,trim(inpnam))
@@ -3775,7 +3790,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
       !==========================================================!
  
       !>--- CREGEN sorting
-@@ -497,6 +892,9 @@
+@@ -497,6 +899,9 @@
    use strucrd
    use dynamics_module
    use shake_module
@@ -3785,7 +3800,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
    implicit none
    type(systemdata),intent(inout) :: env
    character(len=*),intent(in) :: ensnam
-@@ -514,6 +912,23 @@
+@@ -514,6 +919,23 @@
    real(wp) :: temp,newtemp
    character(len=80) :: atmp
    
@@ -3809,7 +3824,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
  !>--- coord setup
    call env%ref%to(mol)
    call rdensembleparam(ensnam,nat,nall)
-@@ -528,6 +943,7 @@
+@@ -528,6 +950,7 @@
    nstrucs = min(nall, env%nrotammds)
    nsim = nstrucs * env%temps 
    call crest_search_multimd_init(env,mol,mddat,nsim)
@@ -3817,7 +3832,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
    allocate (mddats(nsim), source=mddat)
    call crest_search_multimd_init2(env,mddats,nsim)
  !>--- adjust T's and runtimes
-@@ -586,10 +1002,14 @@
+@@ -586,10 +1009,14 @@
    use crest_data
    use iomod
    use utilities
@@ -3832,7 +3847,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
    character(len=128) :: inpnam,outnam,refnam
    character(len=512) :: thispath,tmppath
    logical :: multilevel(6)
-@@ -612,8 +1032,16 @@
+@@ -612,8 +1039,16 @@
  
  !>-- call the crossing routine
      call checkname_xyz(crefile,refnam,tmppath)
@@ -3850,7 +3865,7 @@ diff -ruN a/src/algos/search_conformers.f90 b/src/algos/search_conformers.f90
      if (imax .lt. 1) then
        call remove(trim(tmppath))
        return
-@@ -639,5 +1067,3 @@
+@@ -639,5 +1074,3 @@
      enddo
    end do
  end subroutine crest_newcross3
@@ -9833,7 +9848,61 @@ diff -ruN a/src/legacy_algos/confscript2_misc.f90 b/src/legacy_algos/confscript2
      end if
    end if
  
-@@ -1103,11 +1151,28 @@
+@@ -1090,11 +1138,53 @@
+     call appendto(trim(atmp),trim(crename))
+     call remove(atmp)
+   end do
++  !---- CREST_KEEP_ENSEMBLE (FastCREST, opt-in): ensembles kept at the start of earlier cycles join every merge
++  do i = 0,999
++    write (atmp,'(a,i0,a)') '.keep_',i,'.xyz'
++    inquire (file=trim(atmp),exist=ex)
++    if (.not.ex) exit
++    call appendto(trim(atmp),trim(crename))
++  end do
+   call rmrfw('.cre_')
+   return
+ end subroutine collectcre
+ 
+ !--------------------------------------------------------------------------------------------
++! CREST_KEEP_ENSEMBLE (FastCREST, opt-in). When the MD stage or the GC step finds a lower conformer,
++! elowcheck deletes the crest_rotamers* files (clean_V2i) before the caller can save the newest one as a
++! .cre_* backup, so the next cycle would merge only its own MTD iterations. mode 1: copy the newest
++! ensemble before elowcheck; 2: a new cycle starts, keep the copy as .keep_<k>.xyz (collectcre merges it);
++! 3: no new cycle, drop the copy. Nothing happens without the switch or while a resume replays steps.
++!--------------------------------------------------------------------------------------------
++subroutine keep_candidate(mode)
++  use iomod
++  use crest_data
++  use utilities
++  use crest_restartlog,only:env_set,restart_replaying
++  use crest_mdckpt,only:ckpt_steps
++  implicit none
++  integer,intent(in) :: mode
++  character(len=80) :: atmp,btmp
++  logical :: ex
++  if (.not.env_set('CREST_KEEP_ENSEMBLE')) return
++  if (ckpt_steps() > 0 .and. restart_replaying()) return
++  select case (mode)
++  case (1)
++    call checkname_xyz(crefile,atmp,btmp)
++    inquire (file=trim(atmp),exist=ex)
++    if (ex) call copy(trim(atmp),'.keep_candidate.xyz')
++  case (2)
++    inquire (file='.keep_candidate.xyz',exist=ex)
++    if (.not.ex) return
++    call checkname_xyz('.keep',atmp,btmp)
++    call rename('.keep_candidate.xyz',trim(btmp))
++    write (*,'(1x,a)') 'CREST_KEEP_ENSEMBLE> ensemble before the new cycle kept as '//trim(btmp)
++  case (3)
++    call remove('.keep_candidate.xyz')
++  end select
++end subroutine keep_candidate
++
++!--------------------------------------------------------------------------------------------
+ ! check lower found
+ !--------------------------------------------------------------------------------------------
+ subroutine elowcheck(lower,env)
+@@ -1103,11 +1193,28 @@
    use crest_data
    use strucrd,only:xyz2coord
    use utilities 
@@ -9862,7 +9931,7 @@ diff -ruN a/src/legacy_algos/confscript2_misc.f90 b/src/legacy_algos/confscript2
  !--- some defaults
    ethr = env%ethr  !ETHR threshold that is also used in CREGEN (=0.05 kcal/mol)
    if (env%entropic) then !except for entropy mode
-@@ -1117,6 +1182,7 @@
+@@ -1117,6 +1224,7 @@
    lower = .false.
  
    ediff = (env%eprivious-env%elowest)*autokcal
@@ -9870,7 +9939,7 @@ diff -ruN a/src/legacy_algos/confscript2_misc.f90 b/src/legacy_algos/confscript2
    if (ediff .ge. ethr) then
      write (*,'(1x,a)') '...............................................'
      write (*,'(1x,a)') 'A new lower conformer was found!'
-@@ -1126,12 +1192,14 @@
+@@ -1126,12 +1234,14 @@
      lower = .true.
      if (.not.env%allowrestart) then
        lower = .false.
@@ -9885,7 +9954,7 @@ diff -ruN a/src/legacy_algos/confscript2_misc.f90 b/src/legacy_algos/confscript2
        return
      end if
      !---- clean the dir
-@@ -1143,6 +1211,8 @@
+@@ -1143,6 +1253,8 @@
      lower = .false.
    end if
  

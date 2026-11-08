@@ -35,10 +35,12 @@
 #               resume must be refused with exit code 3
 #   4e resume_later_cycle  test 4 forced into a second cycle right after a widened sort (CREST_TEST_NEWCYCLE), with a CUDA
 #               error in the first MTD iteration of that cycle: the resume must reach it and end normally
+#   4f newcycle_fixes  the forced second cycle with CREST_KEEP_ENSEMBLE=1 and CREST_RESTART_FROM_BEST=1 (opt-in): both
+#               fixes must report, and the first merge after the new cycle must reach the lowest energy found before it
 #   5 dist      the same search with CREST_DIST_OLOOP (optimization passes as Slurm array jobs)
 set -uo pipefail
 
-[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,38p' "$0"; exit 0; }
+[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,40p' "$0"; exit 0; }
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CREST=$(realpath "${1:?usage: run_tests.sh CREST [options]}") || exit 64; shift
 REF=''; DIST=''; WENV=$HERE/../slurm/worker_env.sh; GPU=1; MOL=$HERE/../examples/smoke/struc.xyz; CHRG=0; UHF=0; WORK=$PWD/crest-tests; T=4
@@ -301,6 +303,26 @@ if [[ $GPU == 1 ]]; then
     else
       bad "4e resume_later_cycle: the forced second cycle did not end with failures (see $f)"
     fi
+  fi
+
+  # Opt-in fixes of CREST's new-cycle step. When the MD stage or GC finds a lower conformer, CREST deletes the newest
+  # ensemble before saving it (CREST_KEEP_ENSEMBLE keeps it) and starts the next MTDs from the input structure instead of
+  # the new lowest conformer (CREST_RESTART_FROM_BEST reloads it). Forced second cycle with both switches: the search must
+  # end normally, report both, and its first merge after the new cycle must reach the lowest energy found before it
+  # (without the switch that merge lost 1e-5 Eh on this molecule, hence the 1e-6 Eh tolerance).
+  if search search_fixes CREST_TEST_NEWCYCLE=1 CREST_KEEP_ENSEMBLE=1 CREST_RESTART_FROM_BEST=1 CREST_MD_SEED=20261104; then
+    f=$WORK/search_fixes/crest.out
+    before=$(sed -n '1,/A new lower conformer was found/p' "$f" | sed -n 's/^CREGEN> E lowest : *//p' | sort -g | head -n 1)
+    after=$(sed -n '/A new lower conformer was found/,$p' "$f" | sed -n '/Collecting ensmbles/,$p' | sed -n 's/^CREGEN> E lowest : *//p' | head -n 1)
+    kept=$(grep -c 'CREST_KEEP_ENSEMBLE> ensemble before the new cycle kept' "$f")
+    rst=$(grep -m1 -o 'RMSD *[0-9.]* A to the previous start' "$f")
+    if [[ $kept -ge 1 && -n $rst && -n $before && -n $after ]] && awk -v a="$after" -v b="$before" 'BEGIN { exit !(a <= b + 1e-6) }'; then
+      ok "4f newcycle_fixes: normal termination; ensemble kept; next MTDs from the new lowest conformer ($rst); first merge after the new cycle $after, lowest before it $before"
+    else
+      bad "4f newcycle_fixes: kept $kept, restart '${rst:-none}', lowest before ${before:-?}, first merge after ${after:-?} (see $f)"
+    fi
+  else
+    bad "4f newcycle_fixes (see $WORK/search_fixes/crest.out)"
   fi
 
   # one GPU eigensolve inside the search fails on the GPU and on the CPU: that MD ends early, as in conventional CREST,

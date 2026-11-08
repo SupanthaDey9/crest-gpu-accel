@@ -66,3 +66,26 @@ The defaults in the table are built into the code. `slurm/crest_search.sbatch` w
 - **Reproducibility.** With nested threads, a resumed trajectory is not bitwise identical to an uninterrupted one, just as two uninterrupted multithreaded runs differ. We expect them to be statistically equivalent but did not test this.
 - **Runs that end with failures.** With checkpoints on, a run that ends with failures keeps its files, as a killed run does, so it can be resumed (since 1.1.2; earlier versions deleted the per-iteration ensembles `.cre_*` in CREST's final cleanup). Before the ensembles of an MTD cycle are merged, a resume checks that every iteration of the cycle left its ensemble; if one is missing it stops with exit code 3 (`CREST_RESUME_FORCE=1` continues without it). `CREST_CUDA_TEST_NOCONV=k,fault` (test only) makes the k-th GPU eigensolve report a CUDA error, which ends a run with failures; `tests/run_tests.sh` uses it and checks that the resume merges one ensemble per MTD iteration. `CREST_MD_SEED` (test only) fixes the initial MD velocities of the test searches.
 - **Resume in a later cycle.** A resume replays the completed steps without merging the ensembles after an MTD loop, so leftover files shift the numbering of `crest_rotamers_*` by one in the replayed stage. Up to 1.1.2 a resume in the first MTD batch of a later cycle therefore stopped with "File crest_rotamers_3.xyz is empty" if the last replayed step was a sort with a widened energy window; since 1.2.0 it goes on. `CREST_TEST_NEWCYCLE=1` (test only) forces a new cycle right after such a sort, whatever the energies, because the small test molecule never starts one; `tests/run_tests.sh` uses it.
+
+## 5. Optional fixes of CREST's new-cycle step (`CREST_KEEP_ENSEMBLE=1`, `CREST_RESTART_FROM_BEST=1`)
+
+CREST's iMTD-GC driver (`crest_search_imtdgc`, which the plain command line runs unless `--legacy` is given) starts a new
+cycle when the MD stage or the GC step finds a conformer at least 0.05 kcal/mol below the previous lowest. Two things in
+that step do not do what the code intends. Both are in the 3.0.2 release. FastCREST keeps them by default and fixes them
+on request:
+
+- **The ensemble found so far is lost.** `elowcheck` calls `clean_V2i`, which deletes every `crest_rotamers*` file, before
+  the caller saves the newest of them as a `.cre_*` backup for the next merge; the rename then finds no file, and the
+  next cycle merges only its own MTD iterations. With `CREST_KEEP_ENSEMBLE=1` the newest ensemble is copied before
+  `elowcheck`; if a new cycle starts, the copy is kept as `.keep_<k>.xyz`, and `collectcre` appends every kept file to
+  each later merge (CREGEN removes duplicates). A fresh start removes old `.keep_*` files; a resume does not copy again
+  while it replays completed steps.
+- **The next MTDs start from the input structure.** `elowcheck` writes the new lowest conformer to `coord` as the start of
+  the next MTDs, but only the legacy driver reads that file: this driver runs every MTD from a copy of the input
+  structure made once at the start, while CREGEN's topology check uses `coord` as its reference. With
+  `CREST_RESTART_FROM_BEST=1` the driver reloads its structure from `coord` wherever a new lowest conformer leads to more
+  MTDs (in the MTD loop, after the MD stage, after GC), also while a resume replays completed steps, and prints the RMSD
+  to the previous start.
+
+With both switches unset the code paths are those of 1.2.0 (`docs/VALIDATION.md`).
+

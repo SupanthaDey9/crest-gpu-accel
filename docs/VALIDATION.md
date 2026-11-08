@@ -145,3 +145,13 @@ The same checks passed on 2026-10-26 and 2026-10-27 for earlier revisions of the
 | Numbers | Ga peptide, `-T 1`: CPU single point and GPU single points (GPU route, `CREST_CUDA_DEVSCC=1`, both opt-in settings) byte-identical to the previous build |
 | Clean clone of this release, Nova | Commit c41896b (the tested code plus documentation), cloned and built by `tests/site/nova/build_and_identity.sbatch` with sources fetched from GitHub, gfortran 11.5.0, CUDA 12.4.1, OpenBLAS 0.3.27: rc 0 in 270 s. Ga peptide CPU single point (`-T 1`) byte-identical to the tested build and to the benchmarked binary (E = -415.262561312859191 Eh). `run_tests.sh` on an A100 80GB PCIe: 16 of 16 passed (test 2 bitwise identical to the tested build; test 5: 619 structures optimized by Slurm workers and merged). Ga peptide GPU single points byte-identical to the tested build on the GPU route, with `CREST_CUDA_DEVSCC=1` and with both opt-in settings |
 | Clean clone of this release, RTX PRO 5000 Blackwell | `build.sh` with sources fetched from GitHub, sm_120, conda-forge gfortran 13.4, CUDA 13.3: rc 0 in 223 s. `run_tests.sh`: 15 of 15 passed (test 2 bitwise identical to the tested build on the same machine) |
+
+### Version 1.3.0 (in preparation): opt-in fixes of CREST's new-cycle step
+
+| Item | Value |
+|---|---|
+| Switches unset | Ga peptide, `-T 1`: CPU single point byte-identical to 1.2.0 (Nova). Forced two-cycle search of the test molecule (`CREST_TEST_NEWCYCLE`, CPU solver, same seed): conformers and search log identical to the 1.2.0 build. `run_tests.sh` with `CREST_KEEP_ENSEMBLE` built in, RTX PRO 5000 Blackwell: 15 of 15 passed, test 2 bitwise identical to 1.2.0 |
+| `CREST_KEEP_ENSEMBLE=1` | Forced two-cycle search, same seed: without the switch the first merge after the new cycle lost the lowest conformer of the first cycle (-14.56521 against -14.56522 Eh); with it, that merge keeps it |
+| `CREST_RESTART_FROM_BEST=1` | Forced two-cycle search: the next MTDs start from the new lowest conformer, 0.352 A RMSD from the previous start; normal termination, also together with `CREST_KEEP_ENSEMBLE=1` |
+| Every resume point | Both switches, the forced two-cycle search killed with SIGKILL at each of its 33 tracked steps, then resumed (CPU solver, Nova): 33 of 33 ended normally; resumes after the new cycle restart from the new lowest conformer and keep the saved ensemble. `CREST_KEEP_ENSEMBLE=1` alone with the GPU route (RTX PRO 5000): 33 of 33 |
+

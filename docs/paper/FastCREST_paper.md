@@ -42,7 +42,7 @@ Two further run-time settings change only the threading library and where the th
 
 ![Figure 2](figures/fig_speed.png)
 
-**Figure 2.** Where the speed per MTD step comes from. (a) Time of one E/G evaluation of the test system on an AMD EPYC 7502 node with one thread, and with five threads under the default and a static OpenMP schedule. (b) Time per MTD step as each change is added, with the factor relative to conventional CREST, on two A100 nodes (AMD EPYC 7543 hosts): median of four runs, two per node (bars), and the single runs (dots; one LLVM OpenMP run was slowed by other work on its node). All rows but the last used 32 of the job’s 34 cores, the last 30 (one socket per trajectory). Dashed: opt-in settings. (c) Time per MTD step of each of the six trajectories (mean of two runs) with the Jacobi eigensolver, in a job with 16 and 24 cores on the two sockets: default thread placement, with one trajectory on both sockets (filled); one socket per trajectory, also with LLVM’s OpenMP library; and a control with two trajectories on both sockets.
+**Figure 2.** Where the speed per MTD step comes from. (a) Time of one E/G evaluation of the test system on an AMD EPYC 7502 node with one thread, and with five threads under the default and a static OpenMP schedule, with the factor relative to the default schedule. (b) Time per MTD step as each change is added, with the factor relative to conventional CREST, on two A100 nodes (AMD EPYC 7543 hosts): median of four runs, two per node (bars), and the single runs (dots; one LLVM OpenMP run was slowed by other work on its node). All rows but the last used 32 of the job’s 34 cores, the last 30 (one socket per trajectory). Dashed: opt-in settings. (c) Time per MTD step of each of the six trajectories (mean of two runs) with the Jacobi eigensolver, in a job with 16 and 24 cores on the two sockets: default thread placement, with one trajectory on both sockets (filled); one socket per trajectory, also with LLVM’s OpenMP library; and a control with two trajectories on both sockets.
 
 ### 2.3. GPU Eigensolver and Three-Body Dispersion
 
@@ -106,21 +106,21 @@ Table 1 lists the complete searches. The FastCREST search found a lower conform
 
 **Table 1.** Complete Searches of the Test System
 
-| search | hardware | MTD/MD | wall (h) | *N* (10⁶) | R/R₀ | K<sub>CPU</sub> | K<sub>GPU</sub> |
+| search | hardware | MTD/MD | wall (h) | *N* (10⁶) | times faster | K<sub>CPU</sub> | K<sub>GPU</sub> |
 |:---|:---|:---|:---|:---|:---|:---|:---|
-| CREST 3.0.2<sup>*a*</sup> | not recorded | 4/2 | 321.5 | 5.31 | 1.00 | 1,939 | 0 |
-| CPU, one node<sup>*b*</sup> | Zen 4, 64 cores | 4/2 | 100.3 | 5.50 | 3.32 | 2,334 | 0 |
-| CPU, distributed<sup>*c*</sup> | Zen 4 | 4/3 | 98.7 | 6.17 | 3.79 | 2,851 | 0 |
-| FastCREST, GPU off<sup>*d*</sup> | Zen 5 | 2/1 | 33.8 | 2.62 | 4.71 | 2,255 | 0 |
-| GPU eigensolver only<sup>*e*</sup> | A100/EPYC 7502 | 4/2 | 52.0 | 5.38 | 6.28 | 1,574 | 9.7 |
-| **FastCREST**<sup>*f*</sup> | A100/EPYC 7543 | 5/3 | 54.3 | 7.26 | 8.11 | 1,231 | 7.5 |
-| FastCREST + Jacobi, search 1<sup>*g*</sup> | A100/EPYC 7543 | 4/3 | 36.9 | 5.77 | 9.48 | 1,194 | 6.4 |
-| FastCREST + Jacobi, search 2<sup>*g*</sup> | A100/EPYC 7543 | 3/2 | 28.4 | 4.69 | 9.99 | 1,228 | 6.1 |
-| FastCREST + Jacobi, search 3<sup>*g*</sup> | A100/EPYC 7543 | 4/2 | 36.8 | 5.74 | 9.46 | 1,315 | 6.4 |
-| Fastest mode, search 1<sup>*h*</sup> | A100/EPYC 7543 | 5/3 | 35.2 | 7.17 | 12.36 | 1,195 | 4.9 |
-| Fastest mode, search 2<sup>*h*</sup> | A100/EPYC 7543 | 6/4 | 42.7 | 8.97 | 12.73 | 1,170 | 4.8 |
+| CREST 3.0.2<sup>*a*</sup> | not recorded | 4/2 | 321.5 | 5.31 | 1.00× | 1,939 | 0 |
+| CPU, one node<sup>*b*</sup> | Zen 4, 64 cores | 4/2 | 100.3 | 5.50 | 3.32× | 2,334 | 0 |
+| CPU, distributed<sup>*c*</sup> | Zen 4 | 4/3 | 98.7 | 6.17 | 3.79× | 2,851 | 0 |
+| FastCREST, GPU off<sup>*d*</sup> | Zen 5 | 2/1 | 33.8 | 2.62 | 4.71× | 2,255 | 0 |
+| GPU eigensolver only<sup>*e*</sup> | A100/EPYC 7502 | 4/2 | 52.0 | 5.38 | 6.28× | 1,574 | 9.7 |
+| **FastCREST**<sup>*f*</sup> | A100/EPYC 7543 | 5/3 | 54.3 | 7.26 | 8.11× | 1,231 | 7.5 |
+| FastCREST + Jacobi, search 1<sup>*g*</sup> | A100/EPYC 7543 | 4/3 | 36.9 | 5.77 | 9.48× | 1,194 | 6.4 |
+| FastCREST + Jacobi, search 2<sup>*g*</sup> | A100/EPYC 7543 | 3/2 | 28.4 | 4.69 | 9.99× | 1,228 | 6.1 |
+| FastCREST + Jacobi, search 3<sup>*g*</sup> | A100/EPYC 7543 | 4/2 | 36.8 | 5.74 | 9.46× | 1,315 | 6.4 |
+| Fastest mode, search 1<sup>*h*</sup> | A100/EPYC 7543 | 5/3 | 35.2 | 7.17 | 12.36× | 1,195 | 4.9 |
+| Fastest mode, search 2<sup>*h*</sup> | A100/EPYC 7543 | 6/4 | 42.7 | 8.97 | 12.73× | 1,170 | 4.8 |
 
-One search per row, from the same input and settings: MTD iterations and MD stages, elapsed time of the main job, E/G evaluations *N*, throughput relative to the CREST 3.0.2 search (R/R₀), and allocated CPU- and GPU-hours per million evaluations (K<sub>CPU</sub>, K<sub>GPU</sub>; eq 3). Hardware: GPU and host CPU of the main job (AMD CPUs). All but the first two searches ran their optimizations as Slurm array jobs on other nodes. <sup>*a*</sup>Release version with default OpenMP settings; CPU-hours are 32 threads × wall time, not a recorded allocation. <sup>*b*</sup>Thread settings and loop changes, no GPU. <sup>*c*</sup>Thread settings, distributed optimizations and checkpoints, without the loop changes. <sup>*d*</sup>One cycle; counted among the conventional CREST replicates. <sup>*e*</sup>Earlier version: no loop changes, three-body term on the CPU. <sup>*f*</sup>The default changes of Sections 2.2, 2.3 and 2.6. <sup>*g*</sup>With the warm-started Jacobi eigensolver (Section 2.4). <sup>*h*</sup>Both opt-in settings (Sections 2.4 and 2.5), LLVM’s OpenMP library and one socket per trajectory (30 threads). EPYC 7502 is a Zen 2 CPU, EPYC 7543 a Zen 3 CPU.
+One search per row, from the same input and settings: MTD iterations and MD stages, elapsed time of the main job, E/G evaluations *N*, how many times faster than the CREST 3.0.2 search in E/G evaluations per hour (R/R₀; the searches ran different numbers of iterations, so their wall times are not comparable), and allocated CPU- and GPU-hours per million evaluations (K<sub>CPU</sub>, K<sub>GPU</sub>; eq 3). Hardware: GPU and host CPU of the main job (AMD CPUs). All but the first two searches ran their optimizations as Slurm array jobs on other nodes. <sup>*a*</sup>Release version with default OpenMP settings; CPU-hours are 32 threads × wall time, not a recorded allocation. <sup>*b*</sup>Thread settings and loop changes, no GPU. <sup>*c*</sup>Thread settings, distributed optimizations and checkpoints, without the loop changes. <sup>*d*</sup>One cycle; counted among the conventional CREST replicates. <sup>*e*</sup>Earlier version: no loop changes, three-body term on the CPU. <sup>*f*</sup>The default changes of Sections 2.2, 2.3 and 2.6. <sup>*g*</sup>With the warm-started Jacobi eigensolver (Section 2.4). <sup>*h*</sup>Both opt-in settings (Sections 2.4 and 2.5), LLVM’s OpenMP library and one socket per trajectory (30 threads). EPYC 7502 is a Zen 2 CPU, EPYC 7543 a Zen 3 CPU.
 
 ### 3.3. Same Computation
 
@@ -141,15 +141,15 @@ Replicate searches scatter widely in both codes. Thirteen of the 15 finished con
 
 **Table 3.** Time per MTD Step for Molecules of Different Size
 
-| molecule | atoms | charge | conventional CREST (s) | FastCREST | \+ Jacobi | fastest mode |
+| molecule | atoms | charge | conventional CREST (s per step) | FastCREST (times faster than conventional CREST) | \+ Jacobi (times faster than conventional CREST) | fastest mode (times faster than conventional CREST) |
 |:---|:---|:---|:---|:---|:---|:---|
-| caffeine | 24 | 0 | 0.165 | 2.2 | 2.2 | 11.7 |
-| taxol | 113 | 0 | 0.581 | 3.1 | 4.1 | 7.0 |
-| Ga(III)–peptide | 132 | +3 | 0.782 | 3.5 | 4.6 | 6.9 |
-| Ga(III)–peptide | 174 | −5 | 1.575 | 5.2 | 6.8 | 9.5 |
-| Ga(III)–peptide | 236 | −8 | 2.358 | 5.2 | 6.4 | 7.8 |
-| test system<sup>*a*</sup> | 274 | +4 | 2.630 | 5.5 | 6.6 | 8.3 |
-| amylose, 16 units | 339 | 0 | 3.948 | 7.1 | 7.7 | 9.0 |
+| caffeine | 24 | 0 | 0.165 | 2.2× | 2.2× | 11.7× |
+| taxol | 113 | 0 | 0.581 | 3.1× | 4.1× | 7.0× |
+| Ga(III)–peptide | 132 | +3 | 0.782 | 3.5× | 4.6× | 6.9× |
+| Ga(III)–peptide | 174 | −5 | 1.575 | 5.2× | 6.8× | 9.5× |
+| Ga(III)–peptide | 236 | −8 | 2.358 | 5.2× | 6.4× | 7.8× |
+| test system<sup>*a*</sup> | 274 | +4 | 2.630 | 5.5× | 6.6× | 8.3× |
+| amylose, 16 units | 339 | 0 | 3.948 | 7.1× | 7.7× | 9.0× |
 
 Time per MTD step with conventional CREST, and how many times faster FastCREST, FastCREST with the Jacobi eigensolver and the fastest mode were. One job per molecule on an A100 node with an AMD EPYC 7543 host, mean of two runs per setting, as in Figure 2b. All molecules closed shell; GFN2-xTB, ALPB water, `--quick`. <sup>*a*</sup>Median of the four runs of Figure 2b.
 
@@ -167,7 +167,7 @@ Ensemble sizes vary widely (FastCREST 1 to 173 conformers, conventional CREST 1 
 
 ### 3.5. Limitations
 
-The complete searches and the tests of the computation come from one system with `--quick`. Per MTD step, the gains depended on the size of the molecule (Table 3) and will also depend on the CPU and the GPU. Most configurations in Table 1 ran one complete search, on different hardware, and the replicate groups ran under different conditions. Of 40 FastCREST replicate searches started, 16 completed their first MTD iteration: a memory error on one GPU stopped 17 of them when they resumed, and having seen interim results we did not restart them; the other 7 were canceled early or still queued. Thirteen of these 16 FastCREST searches, but 7 of the 17 conventional CREST ones, resumed from checkpoints during their first iteration; 12 of the 16 finished it on L40S or V100 GPUs, which the code-level tests did not cover, and 6 computed the three-body term on the CPU for part of the run. Resuming in the first MTD iteration of a later cycle failed in four searches, all after their first iteration (fixed in version 1.2.0). In single Cu and Ni searches of a related peptide, most MTD trajectories stopped early with these settings, as they did in Fe searches with the CREST 3.0.2 release; for ten structures of a high-spin Fe(II) complex, FastCREST’s energies and gradients agreed with those of the CREST 3.0.2 release within 9 × 10⁻¹¹ Eₕ and 1.2 × 10⁻¹⁰ Eₕ bohr⁻¹. When a new cycle starts, CREST keeps only the new lowest conformer, not the ensemble found so far, so in conventional CREST and FastCREST alike a final ensemble can lie above the lowest conformer seen during a search.
+The complete searches and the tests of the computation come from one system with `--quick`. Per MTD step, the gains depended on the size of the molecule (Table 3) and will also depend on the CPU and the GPU. Most configurations in Table 1 ran one complete search, on different hardware, and the replicate groups ran under different conditions. Of 40 FastCREST replicate searches started, 16 completed their first MTD iteration: a memory error on one GPU stopped 17 of them when they resumed, and having seen interim results we did not restart them; the other 7 were canceled early or still queued. Thirteen of these 16 FastCREST searches, but 7 of the 17 conventional CREST ones, resumed from checkpoints during their first iteration; 12 of the 16 finished it on L40S or V100 GPUs, which the code-level tests did not cover, and 6 computed the three-body term on the CPU for part of the run. Resuming in the first MTD iteration of a later cycle failed in four searches, all after their first iteration (fixed in version 1.2.0). In single Cu and Ni searches of a related peptide, most MTD trajectories stopped early with these settings, as they did in Fe searches with the CREST 3.0.2 release; for ten structures of a high-spin Fe(II) complex, FastCREST’s energies and gradients agreed with those of the CREST 3.0.2 release within 9 × 10⁻¹¹ Eₕ and 1.2 × 10⁻¹⁰ Eₕ bohr⁻¹. When CREST finds a lower conformer, it starts the next MTD trajectories from the input structure, not from that conformer, and when this starts a new cycle it also discards the ensemble found so far (the 3.0.2 release does the same). This happened at least once in 25 of the 27 finished searches, in both codes, so a final ensemble can lie above the lowest conformer seen during a search. FastCREST 1.3.0 can fix both (opt-in).
 
 ## 4. Conclusions
 
@@ -175,7 +175,7 @@ FastCREST runs CREST’s iMTD-GC searches several times faster on a GPU cluster 
 
 ## Data and Software Availability
 
-FastCREST is available at <https://github.com/chowdhurylab-studio/fastCREST> (version 1.2.0). It consists of patches to CREST cfdc301f,<sup>13</sup> tblite,<sup>14</sup> dftd4,<sup>28</sup> simple-dftd3,<sup>29</sup> multicharge<sup>30</sup> and mctc-lib,<sup>31</sup> each under the license of the code it patches, with a build script that fetches the pinned upstream commits, the thread-settings script, Slurm job templates and a test script. With FastCREST’s options switched off, single-thread energies and gradients are bitwise identical to those of an unpatched build. A clean build from GitHub reproduced the single-point output of the binary used here byte for byte and passed the test script (Table 2). The input structures, the final ensembles and the raw outputs are available from the authors on request.
+FastCREST is available at <https://github.com/chowdhurylab-studio/fastCREST> (version 1.3.0). It consists of patches to CREST cfdc301f,<sup>13</sup> tblite,<sup>14</sup> dftd4,<sup>28</sup> simple-dftd3,<sup>29</sup> multicharge<sup>30</sup> and mctc-lib,<sup>31</sup> each under the license of the code it patches, with a build script that fetches the pinned upstream commits, the thread-settings script, Slurm job templates and a test script. With FastCREST’s options switched off, single-thread energies and gradients are bitwise identical to those of an unpatched build. A clean build from GitHub reproduced the single-point output of the binary used here byte for byte and passed the test script (Table 2). The input structures, the final ensembles and the raw outputs are available from the authors on request.
 
 ## Acknowledgments
 

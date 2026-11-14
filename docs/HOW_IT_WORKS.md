@@ -1,6 +1,6 @@
 # How it works
 
-FastCREST's patches change the five things below in CREST commit cfdc301f (master branch) and one setting: CREST's routine that prints the optimization settings no longer fixes the optimizer cycle limit at 200, so each optimization uses the limit that ANCOPT derives from the number of atoms (README, Known limitations). Everything else is upstream code. Settings marked opt-in or optional are off unless you switch them on.
+FastCREST's patches change the five things below in CREST commit cfdc301f (master branch) and one setting: CREST's routine that prints the optimization settings no longer fixes the optimizer cycle limit at 200, so each optimization keeps the limit that ANCOPT derives from the number of atoms, as xtb's optimizer did for CREST 2 (README, Known limitations). Everything else is upstream code. Settings marked opt-in or optional are off unless you switch them on.
 
 ## 1. Thread layout and loop changes
 

@@ -2,7 +2,7 @@
 
 All tests ran on the Nova cluster at Iowa State University. The code-level tests and the replicate searches used the 274-atom, +4 Ga peptide in ALPB water; `tests/run_tests.sh` uses the 12-atom test molecule in `examples/smoke/`. The pass criteria of the code-level tests (startup, single points, controlled MD) were fixed before the runs. The decision rule for the replicate searches was fixed after some individual results had been seen, but before any group statistic was computed.
 
-Names: **conventional CREST** means CREST without our GPU code; the **CREST 3.0.2 search** is the original 321.5 h conventional CREST search, made with the 3.0.2 release. Five configurations were compared, and the two opt-in settings as three more:
+Names: **conventional CREST** means CREST without our GPU code; the **CREST 3.0.2 search** is the 321.5 h search with the 3.0.2 release, run earlier for another study. Five configurations were compared, plus three with the opt-in settings (each alone and both together):
 
 | Name | What it is |
 |---|---|
@@ -51,7 +51,7 @@ The cycle limit itself also differs in searches. In every CREST 3 version (3.0 t
 
 ## Controlled MD
 
-Each comparison used 20 ps runs from four starts, at 400 and 500 K, with identical initial velocities on both sides. The score is the fraction of frames whose bonding topology changed. A pair counts as equivalent if the 90% confidence interval of the mean paired difference lies within ±0.15 (two one-sided tests).
+Each comparison used 20 ps runs from four starts, at 400 and 500 K, with identical initial velocities on both sides. The score is the fraction of frames whose bonding topology changed. Two configurations count as equivalent if the 90% confidence interval of the mean paired difference lies within ±0.15 (two one-sided tests).
 
 | Comparison | raw frames | after optimization |
 |---|---|---|
@@ -77,7 +77,7 @@ All 13 comparisons are equivalent. Three intervals after optimization exclude ze
 
 **Groups.** 16 FastCREST searches against 17 conventional CREST searches. The conventional CREST searches ran our builds on CPUs only, whose single-thread energies and gradients are bitwise identical to those of the unmodified build. All searches used the tuned thread settings and the larger optimizer cycle limit of our builds, and most used distributed optimizations, which change speed but not the computation.
 
-**Conditions.** The groups ran under different conditions. An uncorrectable memory error on one GPU stopped the resumed jobs of 17 of 40 FastCREST replicates at startup; after seeing interim results we did not resubmit them, and 7 more were canceled early or still queued. Thirteen of the 16 FastCREST searches but 7 of the 17 conventional CREST ones resumed from checkpoints before the endpoint. Twelve of the 16 FastCREST searches finished their first MTD iteration on L40S or V100 GPUs, which the code-level tests did not cover, and 6 of the 16 computed the three-body term on the CPU in at least part of the run.
+**Conditions.** The groups ran under different conditions. An uncorrectable memory error on one GPU stopped the resumed jobs of 17 of 40 FastCREST replicates at startup; after seeing interim results we did not resubmit them, and 7 more were canceled early or still queued. Thirteen of the 16 FastCREST searches but 7 of the 17 conventional CREST ones resumed from checkpoints before the end of their first MTD iteration. Twelve of the 16 FastCREST searches finished their first MTD iteration on L40S or V100 GPUs, which the code-level tests did not cover, and 6 of the 16 computed the three-body term on the CPU in at least part of the run.
 
 **Result.**
 
@@ -100,7 +100,7 @@ Final ensembles of the 26 finished replicate searches (10 FastCREST, 15 conventi
 `build.sh` builds from upstream plus `patches/`. Two checks are run on the result:
 
 - **Same numbers as the benchmarked binary:** a single-thread single point of the Ga peptide must give a `crest.engrad` byte-identical to the one from the FastCREST binary used for the results above.
-- **Repeatable checks:** `tests/run_tests.sh` repeats the single-point checks (CPU against a reference binary, GPU against CPU) and runs a short GPU search, optionally with distributed passes. Since 1.1.1 it also forces a GPU eigensolve that does not converge (`CREST_CUDA_TEST_NOCONV`): repeated on the CPU, the single point must match the CPU single point; if the CPU repeat fails too, the single point must fail as an ordinary SCC failure and a search must still end normally. Since 1.1.2 it also runs the Hessian thermochemistry with the GPU route selected, which must equal the CPU solver's, and resumes a search that a forced CUDA error ended with failures: the resume must end normally and merge one ensemble per MTD iteration, and the same folder without those ensembles must be refused.
+- **Repeatable checks:** `tests/run_tests.sh` repeats the single-point checks (CPU against a reference binary, GPU against CPU) and runs a short GPU search, optionally with distributed optimizations. Since 1.1.1 it also forces a GPU eigensolve that does not converge (`CREST_CUDA_TEST_NOCONV`): repeated on the CPU, the single point must match the CPU single point; if the CPU repeat fails too, the single point must fail as an ordinary SCC failure and a search must still end normally. Since 1.1.2 it also runs the Hessian thermochemistry with the GPU route selected, which must equal the CPU solver's, and resumes a search that a forced CUDA error ended with failures: the resume must end normally and merge one ensemble per MTD iteration, and the same folder without those ensembles must be refused.
 
 ### Results on Nova (2026-10-28, fresh clone of this repository from GitHub, commit d6c51ab)
 
@@ -111,7 +111,7 @@ Final ensembles of the 26 finished replicate searches (10 FastCREST, 15 conventi
 | Binary | sha256 0d9a8311... A fresh build is not expected to be byte-identical to the benchmarked binary (different build paths and link order), so the single point below compares results instead |
 | Single point vs benchmarked binary | Ga peptide, `-T 1`, CPU solver: `crest.engrad` byte-identical to the benchmarked binary (sha256 of the file 39765069...; E = -415.262561312859191 Eh) |
 | `run_tests.sh`, A100 80GB PCIe node | Test 1 (CPU single point): pass. Test 2 (against the benchmarked binary): bitwise identical. Test 3 (GPU single point vs CPU): max abs dE 8.9e-15 Eh, max abs dG 1.0e-15 Eh/bohr, three-body kernel ran on the GPU (1 call, 0 fallbacks). Test 4 (short GPU search): normal termination |
-| Distributed passes (`--dist`, GPU driver, CPU workers on a CPU partition) | a short search in which 635 structures were optimized by Slurm worker jobs on other nodes, checked by the driver and merged; normal termination in 252 s |
+| Distributed optimizations (`--dist`, GPU main job, CPU array jobs on a CPU partition) | a short search in which 635 structures were optimized by Slurm worker jobs on other nodes, checked by the driver and merged; normal termination in 252 s |
 
 The same checks passed on 2026-10-26 and 2026-10-27 for earlier revisions of the patches, which differed only in source comments and two CMake message strings.
 
@@ -121,7 +121,7 @@ The same checks passed on 2026-10-26 and 2026-10-27 for earlier revisions of the
 |---|---|
 | Nova build | `build.sh`, gfortran 11.5.0, CUDA 12.4.1, OpenBLAS 0.3.27: rc 0; Ga peptide CPU single point (`-T 1`) byte-identical to the 1.1.0 binary (E = -415.262561312859191 Eh) |
 | `run_tests.sh`, RTX PRO 5000 Blackwell (sm_120 build, conda-forge gfortran 13.4, CUDA 13.3) | 7 of 7 passed. Tests 3 and 3b: max abs dE 8.9e-15 and 7.1e-15 Eh against the CPU. Test 3e (forced non-converged GPU solve, repeated on the CPU): max abs dE 8.9e-15 Eh, one CPU repeat. Test 3f (the CPU repeat fails too): ordinary failure, no GPU failure. Tests 4 and 4b: normal termination; in 4b one MD ended early. With 1.1.0 code, tests 4 and 4b fail with this compiler ("solvent: '' is not parametrized") |
-| `run_tests.sh`, Nova A100 80GB PCIe (the Nova build above) | 9 of 9 passed: 1; 2 (bitwise identical to the 1.1.0 binary); 3, 3b; 3e (max abs dE 1.4e-14 Eh, one CPU repeat); 3f; 4, 4b; 5 (distributed passes: 601 structures optimized by Slurm workers and merged, normal termination in 497 s) |
+| `run_tests.sh`, Nova A100 80GB PCIe (the Nova build above) | 9 of 9 passed: 1; 2 (bitwise identical to the 1.1.0 binary); 3, 3b; 3e (max abs dE 1.4e-14 Eh, one CPU repeat); 3f; 4, 4b; 5 (distributed optimizations: 601 structures optimized by Slurm workers and merged, normal termination in 497 s) |
 | GPU single points vs 1.1.0, same A100 | Ga peptide, `-T 1`: `crest.engrad` byte-identical to the 1.1.0 binary on the GPU route and with `CREST_CUDA_WARMJACOBI=1` |
 
 ### Version 1.1.2 (2026-11-04): entropy mode with the GPU route, resume after a run that ended with failures
@@ -130,7 +130,7 @@ The same checks passed on 2026-10-26 and 2026-10-27 for earlier revisions of the
 |---|---|
 | Nova build | `build.sh`, gfortran 11.5.0, CUDA 12.4.1, OpenBLAS 0.3.27: rc 0 in 348 s; Ga peptide CPU single point (`-T 1`) byte-identical to the 1.1.1 binary (E = -415.262561312859191 Eh) |
 | `run_tests.sh`, RTX PRO 5000 Blackwell (sm_120 build, conda-forge gfortran 13.4, CUDA 13.3) | 10 of 10 passed: 1; 3, 3b; 3e, 3f; 3h (Hessian thermochemistry with the GPU route selected: the 298.15 K result equals the CPU solver's, 70.800194); 4, 4b; 4c (a CUDA error at GPU eigensolve 25,493 of 50,986 ended the run with failures, and the run kept the ensemble of its finished MTD iteration; the resume ended normally and merged 2 ensembles for the 2 MTD iterations of the cycle); 4d (the same folder without that ensemble: resume refused with exit code 3) |
-| `run_tests.sh`, Nova H200 NVL (the Nova build above) | 1; 2 (bitwise identical to the 1.1.1 binary); 3, 3b, 3e, 3f, 3h; 4, 4b, 4c, 4d; 5 (distributed passes: 599 structures optimized by Slurm workers and merged, normal termination in 250 s) passed. This run used a draft of the script in which 4c also required the resumed conformer file to equal test 4's byte for byte. That failed because two seeded test searches are not bitwise identical, so the condition was dropped; 4c passes on the same output |
+| `run_tests.sh`, Nova H200 NVL (the Nova build above) | 1; 2 (bitwise identical to the 1.1.1 binary); 3, 3b, 3e, 3f, 3h; 4, 4b, 4c, 4d; 5 (distributed optimizations: 599 structures optimized by Slurm workers and merged, normal termination in 250 s) passed. This run used a draft of the script in which 4c also required the resumed conformer file to equal test 4's byte for byte. That failed because two seeded test searches are not bitwise identical, so the condition was dropped; 4c passes on the same output |
 | GPU single points vs 1.1.1, same H200 | Ga peptide, `-T 1`: `crest.engrad` byte-identical to the 1.1.1 binary on the GPU route and with `CREST_CUDA_WARMJACOBI=1` |
 | Failures at other points of a search, RTX PRO 5000 Blackwell | The search of test 4 with a CUDA error at 3, 10, 25, 40, 60, 75, 85, 92 and 98% of its 50,986 GPU eigensolves, then a resume. All nine failed runs kept their files. All nine resumes ended normally with the ensembles of both MTD iterations: merged after the loop for failures during the MTD iterations, restored from the post-loop snapshot for failures in the MDs after the loop. This used the 12-atom test molecule; a failure in a later cycle was not tested |
 
@@ -140,8 +140,8 @@ The same checks passed on 2026-10-26 and 2026-10-27 for earlier revisions of the
 |---|---|
 | GPU-resident SCC (`CREST_CUDA_DEVSCC=1`) | Single points of 306 structures and controlled MD, alone and with the Jacobi solver: see the sections above |
 | Whole searches in the fastest mode | Two searches of the Ga peptide with both opt-in settings, LLVM's OpenMP runtime and one socket per trajectory (one A100 per main job, optimizations on CPU worker jobs): 35.2 h and 42.7 h, 12.4x and 12.7x the throughput of the CREST 3.0.2 search |
-| The four searches that stopped | Replayed on copies of their folders. With the previous build all four stop with "File crest_rotamers_3.xyz is empty" (exit code 155), as they did. With the fix all four reach their target MTD batch, the identity check passes and all six trajectories resume from their checkpoints; each run was stopped after 240 s |
-| `run_tests.sh`, Nova A100 80GB PCIe | 16 of 16 passed, with new test 4e (a resume in the first MTD batch of a forced second cycle) and test 2 (bitwise identical to the previous build) |
+| The four searches that stopped | Replayed on copies of their folders. With the previous build all four stop with "File crest_rotamers_3.xyz is empty" (exit code 155), as they did. With the fix all four reach their target MTD iteration, the identity check passes and all six trajectories resume from their checkpoints; each run was stopped after 240 s |
+| `run_tests.sh`, Nova A100 80GB PCIe | 16 of 16 passed, with new test 4e (a resume in the first MTD iteration of a forced second cycle) and test 2 (bitwise identical to the previous build) |
 | `run_tests.sh`, RTX PRO 5000 Blackwell | 14 of 14 passed. A build without the fix fails only test 4e, with exit code 155 |
 | Every resume point | The search of test 4, forced into a second cycle, killed with SIGKILL at each of its 33 tracked steps, then resumed: all 33 resumes ended normally. CUDA errors at 8 points of the second cycle: all 8 resumes ended normally. This used the 12-atom test molecule, with threads, so it checks normal termination and the merged ensembles, not bitwise equality |
 | Numbers | Ga peptide, `-T 1`: CPU single point and GPU single points (GPU route, `CREST_CUDA_DEVSCC=1`, both opt-in settings) byte-identical to the previous build |
@@ -154,7 +154,7 @@ The same checks passed on 2026-10-26 and 2026-10-27 for earlier revisions of the
 |---|---|
 | Switches unset | Ga peptide, `-T 1`: CPU single point byte-identical to 1.2.0 (Nova). Forced two-cycle search of the test molecule (`CREST_TEST_NEWCYCLE`, CPU solver, same seed): conformers and search log identical to the 1.2.0 build. `run_tests.sh` with `CREST_KEEP_ENSEMBLE` built in, RTX PRO 5000 Blackwell: 15 of 15 passed, test 2 bitwise identical to 1.2.0 |
 | `CREST_KEEP_ENSEMBLE=1` | Forced two-cycle search, same seed: without the switch the first merge after the new cycle lost the lowest conformer of the first cycle (-14.56521 against -14.56522 Eh); with it, that merge keeps it |
-| `CREST_RESTART_FROM_BEST=1` | Forced two-cycle search: the next MTDs start from the new lowest conformer, 0.352 A RMSD from the previous start; normal termination, also together with `CREST_KEEP_ENSEMBLE=1` |
+| `CREST_RESTART_FROM_BEST=1` | Forced two-cycle search: the next MTDs start from the new lowest conformer, 0.352 Å RMSD from the previous start; normal termination, also together with `CREST_KEEP_ENSEMBLE=1` |
 | Every resume point | Both switches, the forced two-cycle search killed with SIGKILL at each of its 33 tracked steps, then resumed (CPU solver, Nova): 33 of 33 ended normally; resumes after the new cycle restart from the new lowest conformer and keep the saved ensemble. `CREST_KEEP_ENSEMBLE=1` alone with the GPU route (RTX PRO 5000): 33 of 33 |
 | Clean clone, Nova | Commit 8b12db3 cloned and built by `tests/site/nova/build_and_identity.sbatch` with sources fetched from GitHub (gfortran 11.5.0, CUDA 12.4.1, OpenBLAS 0.3.27): rc 0 in 266 s; Ga peptide `-T 1` CPU single point byte-identical to 1.2.0. `run_tests.sh` on an A100 80GB PCIe with `--dist`: 17 of 17 passed, test 2 bitwise identical to 1.2.0, new test 4f passed. GPU single points of the Ga peptide byte-identical to 1.2.0 on the GPU route, with `CREST_CUDA_DEVSCC=1`, and with both opt-in settings |
 | Clean clone, RTX PRO 5000 Blackwell | `build.sh` with sources fetched from GitHub, sm_120, conda-forge gfortran 13.4, CUDA 13.3: rc 0 in 170 s. `run_tests.sh`: 16 of 16 passed (test 2 bitwise identical to the 1.2.0 build on the same machine; 4f passed) |

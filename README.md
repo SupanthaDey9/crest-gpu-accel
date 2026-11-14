@@ -21,7 +21,7 @@ FastCREST is CREST commit cfdc301f (master branch, 80 commits after v3.0.2) plus
 | 274-atom Ga peptide, `--quick`, ALPB water | wall time | throughput (E/G calls per hour, relative) | CPU-hours | GPU-hours |
 |---|---|---|---|---|
 | CREST 3.0.2 search (conventional CREST), 32 threads | 321.5 h | 1.0x | 10,288 (32 threads x wall) | 0 |
-| FastCREST, 1 A100 + CPU workers | 54.3 h | 8.1x | 8,936 | 54.3 |
+| FastCREST, 1 A100 + CPU array jobs | 54.3 h | 8.1x | 8,936 | 54.3 |
 | FastCREST + warm-started Jacobi eigensolver (opt-in), three searches | 36.9, 28.4, 36.8 h | 9.5x, 10.0x, 9.5x | 6,892, 5,755, 7,553 | 36.9, 28.4, 36.8 |
 | FastCREST, fastest mode (opt-in, below), two searches | 35.2, 42.7 h | 12.4x, 12.7x | 8,570, 10,496 | 35.2, 42.7 |
 
@@ -44,7 +44,7 @@ Each change added in turn on two A100 nodes (EPYC 7543 hosts), one batch of six 
 | + LLVM's OpenMP runtime (`CREST_LIBOMP_DIR`) | 0.32 s | 8.2x |
 | + one socket per trajectory (`scripts/crest-places.sh`, 30 threads) = fastest mode | 0.32 s | 8.3x |
 
-The thread settings matter as much as the GPU. With OpenMP defaults, tblite's parallel loops hand out one iteration at a time, and five threads per trajectory computed an energy and gradient no faster than one. Two opt-in settings make each step faster still. The warm-started Jacobi eigensolver (`CREST_CUDA_WARMJACOBI=1`) keeps the Cholesky factor of the overlap matrix for all SCC iterations of one energy and gradient evaluation and starts cuSOLVER's Jacobi solver from the previous iteration's eigenvectors (2.8 sweeps on average). The GPU-resident SCC (`CREST_CUDA_DEVSCC=1`) builds and solves the Hamiltonian and forms the density matrix on the GPU, so that only vectors cross the bus in each SCC iteration. With either or both, single-point energies of 306 structures agree with the CPU route, which is bitwise identical to unmodified CREST, within 4.6e-13 Eh, but not bit for bit. Both are off by default: their full validation ran on A100 GPUs, and the Jacobi gain shrinks for larger molecules (1.24x at 236 atoms, 1.09x at 339 atoms over FastCREST).
+The thread settings matter as much as the GPU. With OpenMP defaults, tblite's parallel loops hand out one iteration at a time, and five threads per trajectory computed an energy and gradient no faster than one. Two opt-in settings make each step faster still. The warm-started Jacobi eigensolver (`CREST_CUDA_WARMJACOBI=1`) keeps the Cholesky factor of the overlap matrix for all SCC iterations of one energy and gradient evaluation and starts cuSOLVER's Jacobi solver from the previous iteration's eigenvectors (2.8 sweeps on average). The GPU-resident SCC (`CREST_CUDA_DEVSCC=1`) builds and solves the Hamiltonian and forms the density matrix on the GPU, so that only vectors cross the bus in each SCC iteration. With either or both, single-point energies of 306 structures agree with the CPU route, which is bitwise identical to unmodified CREST, within 4.6e-13 Eh, but not bit for bit. Both are off by default: their full validation ran on A100 GPUs, and the Jacobi gain depends on the size of the molecule (1.02x at 24 atoms, 1.2 to 1.3x at 113 to 274 atoms, 1.09x at 339 atoms over FastCREST).
 
 ## What you need
 
@@ -57,7 +57,7 @@ The thread settings matter as much as the GPU. With OpenMP defaults, tblite's pa
 | CUDA toolkit with cuSOLVER and cuBLAS | 12.4.1 | needed at build and run time |
 | GPU with good FP64 | A100, H200 | see "Which GPU" |
 | bash >= 4.4, git, patch, python3, binutils | | |
-| Slurm | | only for distributed passes |
+| Slurm | | only for distributed optimizations |
 
 ## Build and test
 
@@ -71,7 +71,7 @@ tests/run_tests.sh bin/crest                  # on a GPU node: single points (CP
 - **Build time.** On Nova a clean build took 5 to 7 minutes on 8 cores.
 - **No internet on the build node:** run `./build.sh --fetch-only SRC` on a login node, then `./build.sh --sources SRC`.
 - **Specific libraries:** choose installations with `--cuda DIR` and `--openblas /path/libopenblas.so`.
-- **Updating.** Build a new version in a new folder and submit new jobs from there (or set `REPO`). Do not rebuild in a folder whose binary running jobs use: `build.sh` overwrites `bin/crest`, which can crash a search running from that file on a network file system, and the worker jobs of running searches refuse a binary whose checksum differs from the main job's.
+- **Updating.** Build a new version in a new folder and submit new jobs from there (or set `REPO`). Do not rebuild in a folder whose binary is used by running jobs: `build.sh` overwrites `bin/crest`, which can crash a search running from that file on a network file system, and the worker jobs of running searches refuse a binary whose checksum differs from the main job's.
 - **Other test modes:** `tests/run_tests.sh bin/crest --no-gpu` runs only the CPU single point (for example on a login node).
   `--dist "<sbatch options>"` also runs the short search with Slurm worker jobs; run it once before your first full search.
 - **Scope of the tests.** `run_tests.sh` uses a 12-atom test molecule. It checks that the build works on your machine (GPU single point equal to the CPU single point to 1e-8 Eh, the three-body kernel ran on the GPU without falling back to the CPU, searches finish). It does not repeat the validation of `docs/VALIDATION.md`.
@@ -104,19 +104,19 @@ To resume after an interruption, add `restart = true` as the first line of `sear
 
 **Fastest mode (opt-in).** Use `source $R/scripts/crest-env.sh fast` instead of `gpu`. If LLVM's OpenMP runtime is installed, set `CREST_LIBOMP_DIR` before sourcing the script. On a two-socket node with 34 or more cores, also run `eval "$($R/scripts/crest-places.sh 6 5)"` and replace `32` by `$CREST_THREADS` in `OMP_NUM_THREADS`, `threads` and `-T`.
 
-## Run on a Slurm cluster with distributed optimization passes
+## Run on a Slurm cluster with distributed optimizations
 
 This is the mode behind the numbers above.
 
 1. Uncomment and edit the module line in `slurm/worker_env.sh` so that workers load the same compiler runtime, OpenBLAS and CUDA modules as the build. `slurm/site/nova_worker_env.sh` is a complete example; to use a site file instead, `export WORKER_ENV=/absolute/path/to/site_env.sh` before `sbatch`. Workers are started with `--export=NONE`.
-2. Make sure that the output folder, this repository and `bin/crest` are on a filesystem that the CPU worker nodes also mount, and that jobs may run `sbatch`, `squeue` and `scancel`. Load the same modules in your shell, then submit the driver:
+2. Make sure that the output folder, this repository and `bin/crest` are on a file system that the CPU worker nodes also mount, and that jobs may run `sbatch`, `squeue` and `scancel`. Load the same modules in your shell, then submit the main job:
 
 ```bash
 export WORKER_SBATCH_ARGS="--partition=<cpu partition> --account=<account> --mem=8G --time=02:00:00"
 sbatch --partition=<gpu partition> --account=<account> slurm/crest_search.sbatch molecule.xyz 0 0 --quick
 ```
 
-**What the driver does.** The driver job takes one GPU and 32 cores. For every optimization pass of 128 or more structures it submits worker arrays of 16-core tasks, with 64 structures each and at most 60 at once. The settings are written to `dist_oloop.conf` in the search folder; the keys are explained in `docs/HOW_IT_WORKS.md`. The driver passes `WORKER_SBATCH_ARGS` to `/bin/sh`, so quote values that contain `|` or other shell characters, for example `--constraint="epyc-7502|epyc-7413"`.
+**What the main job does.** The main job (called the driver in the scripts) takes one GPU and 32 cores. For every batch of 128 or more optimizations it submits Slurm arrays of 16-core worker tasks, with 64 structures each and at most 60 at once. The settings are written to `dist_oloop.conf` in the search folder; the keys are explained in `docs/HOW_IT_WORKS.md`. The driver passes `WORKER_SBATCH_ARGS` to `/bin/sh`, so quote values that contain `|` or other shell characters, for example `--constraint="epyc-7502|epyc-7413"`.
 
 **Resuming.** Resubmitting with `OUT=<folder>` resumes a search. `search.toml` and `dist_oloop.conf` are written only the first time, and an existing `dist_oloop.conf` is used again; edit them in the folder to change settings. To run every pass inside the driver, rename `dist_oloop.conf` and resubmit without `WORKER_SBATCH_ARGS`.
 
@@ -170,7 +170,7 @@ The two Zen 5 rows show the GPU's own effect on the same host CPU type: about 1.
 
 ## How we checked the results
 
-See `docs/VALIDATION.md`. In short:
+Details are in `docs/VALIDATION.md`; the main results:
 
 - **Startup:** the decisions CREST makes before the first trajectory are identical across the 3.0.2 release, an unmodified build of cfdc301f, and FastCREST.
 - **Single points:** on 306 structures, every configuration agrees with the release binary within 1.01e-10 Eh in energy and 8.16e-11 Eh/bohr in gradient, two orders of magnitude inside the preset 1e-8 Eh criterion. FastCREST on the CPU is bitwise identical to the unmodified build; FastCREST on the GPU agrees with it to 4e-13 Eh, and with the opt-in settings to 4.6e-13 Eh.
@@ -187,7 +187,7 @@ See `docs/VALIDATION.md`. In short:
 - **CREST fallback to the input geometry:** when CREST's topology check rejects every structure of one CREGEN call, CREGEN keeps the reference geometry labeled with the lowest energy seen, and the search continues from it. This is upstream CREST code (also in the 3.0.2 release). It sent 2 of our 15 finished conventional CREST searches (both ran FastCREST's binary with the GPU code off) back to the helical input. If `crest_best.xyz` is almost identical to your input, check `crest.out` for CREGEN calls where all structures were removed by the topology check.
 - **CREST's new-cycle step (CREST itself; opt-in fixes since 1.3.0):** when CREST finds a lower conformer after the MTD loop and starts another cycle, its code (also the 3.0.2 release) deletes the ensemble found so far before saving it, and starts the next MTDs from the input structure, not from the new lowest conformer it writes for that purpose (`coord`). A final ensemble can therefore lie above the lowest conformer seen during the search; the `CREGEN> E lowest` lines in `crest.out` show the lowest energy of each stage. FastCREST does the same by default, so that it computes what CREST computes. `CREST_KEEP_ENSEMBLE=1` and `CREST_RESTART_FROM_BEST=1` fix the two steps (`docs/HOW_IT_WORKS.md`); with both unset, the results are those of 1.2.0.
 - **Metal complexes and the topology check (CREST itself):** CREST counts a new or lost metal-ligand contact as a change of bonding topology and drops the structure. In single searches of Zn(II) peptides this removed about 98% of the optimized MTD snapshots, so the search could not follow the metal changing its ligands. CREST's option `--notopo <atom numbers>` leaves the listed atoms (for example the metal) out of the check; all other bonds are still checked.
-- **Resume in a later cycle (fixed in 1.2.0):** up to 1.1.2, a resume in the first MTD batch of a later cycle stopped with "File crest_rotamers_3.xyz is empty" if the sort before that cycle had widened its energy window. This happened in four searches, at their fourth or fifth MTD batch. Since 1.2.0 such a resume goes on.
+- **Resume in a later cycle (fixed in 1.2.0):** up to 1.1.2, a resume in the first MTD iteration of a later cycle stopped with "File crest_rotamers_3.xyz is empty" if the sort before that cycle had widened its energy window. This happened in four searches, at their fourth or fifth MTD iteration. Since 1.2.0 such a resume goes on.
 - **Open-shell metals:** in single searches of open-shell Cu and Ni peptides at these settings, most MTDs stopped early. Fe searches with the release build did the same, so we cannot tell whether FastCREST plays a part.
 - **GPU eigensolve that does not converge (fixed in 1.1.1):** up to 1.1.0, a GPU eigensolve that did not converge stopped the whole search ("CREST terminated with failures.", with `CREST CUDA solve failed; bridge status=6 stage=15` in `crest.err`). This happened in a high-spin Fe(II) peptide search. Since 1.1.1 such a solve is repeated on the CPU with LAPACK, the solver of conventional CREST, and the search goes on; if LAPACK fails too, only that MD ends early, as in conventional CREST. A search that stopped this way lost its per-iteration ensembles when it ended (see the next item), so start it again in a new folder instead of resuming it.
 - **Resume after a run that ended with failures (fixed in 1.1.2):** up to 1.1.1, a run that ended with failures deleted its per-iteration ensembles (`.cre_*`) in CREST's final cleanup. A resume of its folder then dropped the conformers of the earlier MTD iterations of that cycle and still ended normally, with a final ensemble well above the energies found before. Since 1.1.2 a checkpointed run keeps its files when it ends with failures, as a killed run does, and a resume that would drop conformers stops with exit code 3.

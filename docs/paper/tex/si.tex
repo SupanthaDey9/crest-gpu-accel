@@ -43,8 +43,7 @@ GFN2-xTB with ALPB water and \quickflag. FastCREST and conventional CREST search
 \quickflag{} followed \texttt{-{}-ewin 10} and reset the energy window to 5~kcal/mol, so the effective settings of all
 searches are the same (Table~\ref{tab:si-settings}), except for the optimizer cycle limit (Section~\ref{si:cap}).
 
-The CREST 3.0.2 release is the conda-forge build, which bundles a fork of tblite 0.3.0. FastCREST and conventional
-CREST were built from CREST commit cfdc301f with tblite 0.5.0, gfortran 11.5 (\texttt{-O3}, no \texttt{-march}, so no
+The CREST 3.0.2 release is the conda-forge build, which bundles a fork of tblite 0.3.0. Our builds (FastCREST, and CREST without our patches) used CREST commit cfdc301f with tblite 0.5.0, gfortran 11.5 (\texttt{-O3}, no \texttt{-march}, so no
 fused multiply--add instructions), OpenBLAS 0.3.27 and CUDA 12.4.1. Of the 200 files under \texttt{src/}, 151 are
 identical in the two CREST trees, including the MD and MTD code, CREGEN and every optimizer file except the one with the
 cycle limit.
@@ -83,11 +82,10 @@ SCC & energy $1\times10^{-6}$~\Eh, density $2\times10^{-5}$ \\
 \paragraph{Configurations.} The tests compare nine configurations: the CREST 3.0.2 release; conventional CREST with the
 command-line input and with the input file; FastCREST with the CPU solver, alone and with the warm-started Jacobi
 eigensolver switched on; and FastCREST on the GPU, alone, with the Jacobi eigensolver, with the GPU-resident SCC, and
-with both opt-in settings. Every GPU calculation had to show GPU use (an open CUDA session and the three-body term on
-the GPU without a CPU fallback); all did.
+with both opt-in settings. Every GPU calculation had to show GPU use (eigensolves and the three-body term on the GPU, without a CPU fallback); all did.
 
 \paragraph{Search setup.} Eight configurations replayed the search up to its first MTD. All made the same decisions as the
-CREST 3.0.2 search: the same pre-optimized structure (energies of its first and last optimization steps $-415.2625315087$
+CREST 3.0.2 search: the same preoptimized structure (energies of its first and last optimization steps $-415.2625315087$
 and $-415.2625672259$~\Eh, the same to $1\times10^{-10}$~\Eh), flexibility measure 0.391, six MTD trajectories of
 250~ps with the same bias settings, no failed trial MTD, 274 bonds with Wiberg bond order above 0.5 and 272 SHAKE
 constraints.
@@ -96,7 +94,7 @@ constraints.
 final conformers and 50 MD snapshots of the CREST 3.0.2 search, two steps of its first optimization, and 50 MD-stage
 inputs and 67 conformers of a FastCREST search. The criterion was $|\Delta E| \le 10^{-8}$~\Eh{} and a largest gradient
 component difference $\le 10^{-6}$~\Eh~bohr$^{-1}$; every structure met it in every comparison (Table~\ref{tab:si-sp}).
-Our builds without the GPU gave bitwise identical results; the $10^{-10}$~\Eh{} between them and the release comes from
+Our builds without the GPU gave bitwise identical results; the differences of up to $10^{-10}$~\Eh{} between them and the release come from
 the different builds (tblite version, compiler and flags). The apo peptide and the Co, Cu and Ni complexes of a related peptide (241 or 242 atoms; the complexes open shell with one or two unpaired electrons) agreed as well: over ten structures each,
 the release, FastCREST on the CPU and FastCREST on the GPU agreed within $1.1\times10^{-10}$~\Eh{} and
 $7.4\times10^{-11}$~\Eh~bohr$^{-1}$.
@@ -129,8 +127,7 @@ both opt-in settings vs CPU solver & 0 & $4.55\times10^{-13}$ & $6.0\times10^{-1
 \paragraph{Controlled MD.} Trajectories cannot be compared bit for bit, so we compared what matters for the search: how
 often MD snapshots change their bonding topology, which decides how many structures CREGEN keeps. MD trajectories of
 20~ps at 400 and 500~K started from four structures with the same initial velocities in every configuration (taken from
-CREST restart files): seeds 1--3 for two structures and 1--8 for two structures of a later cycle, 44 trajectory pairs per
-comparison (24 when only seeds 1--3 were run). Every tenth snapshot was optimized with the 200-cycle limit. For each pair
+CREST restart files): three sets of initial velocities for two structures and eight for two structures of a later cycle, 44 trajectory pairs per comparison (24 when only the first three sets were run). Every tenth snapshot was optimized with the 200-cycle limit. For each pair
 we took the difference $d$ in the fraction of snapshots whose topology differs from the input, before and after
 optimization. A comparison passed if the 90\% confidence interval of the mean $d$ lay within $\pm0.15$ (two one-sided
 tests; the margin was fixed before the runs). All 13 comparisons passed (Table~\ref{tab:si-md}). Paired trajectories
@@ -195,19 +192,18 @@ MD stage of a FastCREST search, second cycle & 93 & 91 & 2 & 4 \\
 \section{Replicate Searches}
 \label{si:replicates}
 
-The comparison was fixed before any group summary was computed. The compared quantity is the lowest energy after the crude
+The comparison was fixed after some individual results had been seen but before any group statistic was computed. The compared quantity is the lowest energy after the crude
 optimization of the first MTD iteration (14,994 snapshots, the same CPU optimizer in every search), taken from every
-search that reached that point, finished or not, because searches with fewer cycles finish first. The groups are FastCREST on
+search that reached that point, finished or not, so that searches that needed fewer cycles, and therefore finished first, are not favored. The groups are FastCREST on
 the GPU and conventional CREST, that is, our builds run on CPUs only, whose single points are bitwise identical to
 those of CREST built without our patches. The statistic is the Hodges--Lehmann shift (FastCREST minus conventional CREST) with exact Mann--Whitney
 confidence intervals. A difference is detected if the 95\% interval excludes zero; equivalence is shown if the 90\%
 interval lies within $\pm2$~kcal/mol (under half the 5~kcal/mol energy window); otherwise the result is inconclusive.
 
-Sixteen of 40 FastCREST searches and 17 of 18 conventional CREST searches reached that point
-(Table~\ref{tab:si-searches}). Most of the other FastCREST searches stopped within seconds on one GPU with a memory error
+Sixteen of 40 FastCREST searches and 17 of 18 conventional CREST searches have a value at that point (Table~\ref{tab:si-searches}); conventional 18 passed it, but its value was not kept. Most of the other FastCREST searches stopped within seconds on one GPU with a memory error
 and were not restarted. The 16 that reached it ran their first iteration on 9 L40S, 3 V100, 3 A100 and 1 H200 GPU; 13 of
 them, but 7 of the 17 conventional searches, resumed from checkpoints before that point. The shift was $+4.09$~kcal/mol
-(95\% interval $-4.94$ to $+11.75$, achieved level 0.951; 90\% interval $-3.58$ to $+10.13$; two-sided $p = 0.35$): no
+(95\% interval $-4.94$ to $+11.75$, achieved confidence level 0.951; 90\% interval $-3.58$ to $+10.13$; two-sided $p = 0.35$): no
 difference detected and equivalence not shown. With only the four FastCREST searches on A100 or H200 GPUs the shift
 was $+3.12$ ($-14.50$ to $+19.80$), and against only the nine conventional searches with FastCREST's own build on the
 CPU, $+2.75$ ($-6.44$ to $+13.89$). The final energies of the finished searches (10 FastCREST, 15 conventional) gave a shift of $-2.70$~kcal/mol
@@ -270,8 +266,7 @@ partial trajectory.
 
 CREST's other run types use the same trajectory and optimization code, so FastCREST runs them as well. We compared each with CREST built from the same commit without our patches, which stops optimizations after 200 cycles (Section~\ref{si:cap}; Table~\ref{tab:si-modes}). Protonation, deprotonation and tautomer
 searches have no MD and gave the same structures and energies. The NCI-MTD and entropy runs are adaptive and scatter
-from run to run in both codes; where runs were repeated, their results agree within that scatter. The taxol entropy runs and the NCI-MTD search of the test system ran once per code. One NCI-MTD search of the test system was also
-run with FastCREST and with the CREST 3.0.2 release (last NCI-MTD row). With the wall potential of NCI-MTD, FastCREST
+from run to run in both codes; where runs were repeated, their results agree within that scatter. The taxol entropy runs ran once per code. The NCI-MTD search of the test system was run once with FastCREST and once with the CREST 3.0.2 release instead (last NCI-MTD row). With the wall potential of NCI-MTD, FastCREST
 runs the optimizations in the main job rather than as array jobs, so its gain is smaller than in iMTD-GC searches.
 
 \begin{table}[tbp]
@@ -285,7 +280,7 @@ run type & molecule & result \\
 protonation, deprotonation, tautomers & uracil, caffeine, guanine (gas phase) & same structures and energies in every run (fastest mode: largest $|\Delta E|$ $6.4\times10^{-6}$~\Eh) \\
 protonation & Ga(III)--peptide (132 atoms, $+3$, ALPB water) & lowest protomer the same within $2\times10^{-6}$~\Eh{} in all runs; the number of structures kept varies from run to run in conventional CREST itself (53, 69 and 60) as in FastCREST (74 and 58) \\
 NCI-MTD & water trimer (gas phase) & same lowest energy ($-15.235025$~\Eh) in all nine runs \\
-NCI-MTD & Ga(III)--peptide (132 atoms, ALPB water, \quickflag) & lowest energies of six runs within 1.8~kcal/mol; conventional CREST 59.6 and 217.7~min, FastCREST 18.1 and 29.0~min (3.3 and 7.5 times faster in the two pairs of runs, different nodes), fastest mode 14.6 and 16.0~min \\
+NCI-MTD & Ga(III)--peptide (132 atoms, ALPB water, \quickflag) & lowest energies of six runs within 1.8~kcal/mol; conventional CREST 59.6 and 217.7~min, FastCREST 18.1 and 29.0~min (3.3 and 7.5 times faster in the two pairs of runs, different nodes), fastest mode 16.0 and 14.6~min (3.7 and 14.9 times faster) \\
 NCI-MTD & test system (ALPB water) & one search each from the same structure: CREST 3.0.2 release 93.7~h (32 threads, EPYC 7502 node), FastCREST 34.2~h (A100 GPU, EPYC 7513 host; 2.7 times faster, with three MTD iterations against two); lowest energies 5.0~kcal/mol apart (FastCREST higher); 1 conformer with FastCREST, 7 with the release \\
 entropy & $n$-octane (gas phase) & conformational entropy 8.12~cal~mol$^{-1}$~K$^{-1}$ (FastCREST), 8.13 (fastest mode), 8.20, 8.20 and 8.32 (conventional CREST); for this 26-atom molecule FastCREST took 14.8~min and conventional CREST 7.3~min (2.0 times slower) \\
 entropy & taxol (113 atoms, ALPB water, \quickflag) & conformational entropy 9.65 (conventional CREST, 63.3~h), 9.89 (FastCREST, 46.5~h, 1.4 times faster) and 9.37~cal~mol$^{-1}$~K$^{-1}$ (fastest mode, 21.6~h, 2.9 times faster); different nodes \\
@@ -293,7 +288,7 @@ entropy & taxol (113 atoms, ALPB water, \quickflag) & conformational entropy 9.6
 \end{tabular}
 \end{table}
 
-\section{CREST's New-Cycle Step and FastCREST's Opt-in Fixes}
+\section{CREST's New-Cycle Step and FastCREST's Opt-In Fixes}
 \label{si:cycle}
 
 When CREST's iMTD-GC search finds a lower conformer, two things in its code (CREST 3.0.2 and cfdc301f; the search
@@ -301,12 +296,11 @@ routine that the command line runs) do not do what the code intends. First, the 
 conformer deletes every \texttt{crest\_rotamers} file before the caller saves the newest of them for the next merge, so
 when the MD stage or genetic crossing starts a new cycle, the ensemble found so far is lost and the next cycle merges
 only its own MTD iterations. Second, the new lowest conformer is written to the file \texttt{coord} as the start of the
-next MTD trajectories, but this routine never reads it again: every MTD trajectory starts from the input structure. CREGEN's
+next MTD trajectories, but this routine never reads it again: every MTD trajectory starts from the optimized input structure. CREGEN's
 topology check, however, compares with \texttt{coord}.
 
 Of the 26 finished replicate searches of the test system, 24 started at least one new cycle after the MD stage or genetic
-crossing (41 new cycles in all), in conventional CREST and FastCREST alike (Table~\ref{tab:si-searches}); with the lower conformers
-found inside MTD loops, the next MTD trajectories restarted from the input structure 60 times. Because both codes share
+crossing (41 new cycles in all), in conventional CREST and FastCREST alike (Table~\ref{tab:si-searches}); with the lower conformers found during MTD iterations, the next MTD trajectories restarted from the input structure 60 times. Because both codes share
 this behavior, it does not affect the comparison between them, but it explains why a final ensemble can lie far above
 the lowest conformer seen during a search.
 
@@ -314,8 +308,7 @@ the lowest conformer seen during a search.
 it is deleted and joins every later merge; with \texttt{CREST\_RESTART\_FROM\_BEST=1} the next MTD trajectories start from
 the new lowest conformer. With both unset, FastCREST computes what it did before: in a search forced into a second cycle,
 the conformers and the search log were identical to the previous version, and single points were byte-identical. With
-both set, the forced search restarted from the new lowest conformer, kept the earlier ensemble, and resumed normally when
-killed at each of its 33 tracked steps.\par}
+both set, the forced search restarted from the new lowest conformer, kept the earlier ensemble, and resumed normally when killed at each of its 33 checkpoint steps.\par}
 
 \section{Zn-Binding Test Peptides}
 \label{si:metal}
@@ -332,7 +325,7 @@ water, \quickflag{} and \texttt{-{}-noreftopo}; FastCREST used the size-dependen
 changes partners: with the default check, a FastCREST search of p3 ended 119~kcal/mol above the lowest structure of
 Table~\ref{tab:si-zn}, with the Zn still on the His.
 
-In every search with the Zn left out of the topology check, the peptide wraps around the Zn (Figure~\ref{fig:si-zn},
+In every other search that gave a structure, the peptide wraps around the Zn (Figure~\ref{fig:si-zn},
 Table~\ref{tab:si-zn}). The helix unwinds, the Zn becomes six-coordinate (seven-coordinate in one structure), its first
 and last donor residues lie 5 to 9 positions apart, and the radius of gyration falls from 6.6--6.8~\AA{} to
 5.4--6.0~\AA. At neutral pH the donors are the His, Asp and Glu carboxylates and backbone carbonyls, in p2 also the
@@ -341,9 +334,7 @@ pH the His binds with four or five backbone carbonyl oxygens.
 
 FastCREST 1.2.0 finished every system in 13 to 34~h (42 to 79~h with both fixes, which add cycles). Conventional CREST
 finished only low-pH p1, in 97~h (FastCREST 7.3 times faster); its searches of p2 and p3 were not finished after 6~days
-(FastCREST at least 10 and 4.2 times faster). In p1 the first optimization formed two bonds at the N-terminus that the
-input lacks. CREGEN compares with the input and removed all or nearly all structures of the MTD trajectories, which start
-from the optimized structure, so valid structures came from the MD stages; with the restart fix, the MTD trajectories of
+(FastCREST at least 10 and 4.2 times faster). In neutral p1, the initial optimization of the input formed two bonds at the N-terminus that the input lacks. CREGEN compares with the input and removed all or nearly all structures of the MTD trajectories, which start from the optimized input, so valid structures came from the MD stages; with the restart fix, the MTD trajectories of
 later cycles started from a valid structure. The conventional search of p1 had finished two MTD iterations without a valid
 structure when we stopped it after 53~h. The finished conventional search ended 9.1~kcal/mol above the lowest structure
 it had found, through the new-cycle step of Section~\ref{si:cycle}. With both fixes, FastCREST gave the lowest final
@@ -427,7 +418,7 @@ node, and FastCREST 1.1.1 on one A100 GPU with an AMD EPYC 7543 host, with its o
 tasks on other nodes (6,060 allocated CPU-hours).
 The two codes also used different optimizer cycle limits (Section~\ref{si:cap}): 200 cycles in CREST 3.0.2, and 264, 792
 and 1,320 cycles for crude, regular and tight thresholds in FastCREST. In the two MD stages, 3,013 of 5,061 and 3,220 of
-5,028 optimizations converged in CREST 3.0.2, and all of them in FastCREST.
+5,028 optimizations converged in CREST 3.0.2, and all MD-stage optimizations in FastCREST.
 FastCREST took 58.4~h and conventional CREST 265.8~h, so FastCREST was 4.6 times faster, on different hardware and with
 more work: it ran three cycles (six MTD iterations) and conventional CREST two (four). Per MTD iteration, FastCREST took
 7.2~h and conventional CREST 35.2~h (4.9 times faster). No trajectory stopped early in either search.
@@ -448,8 +439,8 @@ per code, run-to-run scatter (Section~\ref{si:replicates}) was not measured for 
 \label{si:fe}
 
 The high-spin Fe(II) complex of the same peptide (264 atoms, charge 0, four unpaired electrons, with the protonation
-states and neutral termini of Section~\ref{si:ga2}) was searched once with each code (an earlier FastCREST search, cut short by bugs fixed in versions 1.1.1 and 1.1.2, is not used), with the codes and settings of
-Section~\ref{si:ga2}, from one preoptimized helical input in which Fe binds three oxygens. Conventional CREST took 242.3~h on 32 threads of an
+states and neutral termini of Section~\ref{si:ga2}) was searched once with each code, with the codes and settings of
+Section~\ref{si:ga2}, from one preoptimized helical input in which Fe binds three oxygens. An earlier FastCREST search, cut short by bugs fixed in versions 1.1.1 and 1.1.2, is not used. Conventional CREST took 242.3~h on 32 threads of an
 Intel Skylake node, and FastCREST 7.3~h on one A100 GPU with an AMD EPYC 7513 host (63 array tasks, 222 CPU-hours). Both
 searches finished normally, but most trajectories stopped early in both codes: 48 of 50 MTD and MD trajectories in
 conventional CREST and all 20 in FastCREST, and the MTD iterations produced only 2 to 29\% of the snapshots of a complete
@@ -463,7 +454,7 @@ and the side-chain oxygen of Gln6, with no carboxylate; it lies 85.5~kcal/mol lo
 CREST had found a structure 13.7~kcal/mol below FastCREST's lowest final conformer, also compact and without a
 carboxylate donor, but a new cycle dropped it (Section~\ref{si:cycle}), and the final ensemble ended 99.2~kcal/mol above
 it. Single points gave the same energies with CREST 3.0.2 and FastCREST for the final conformers of both searches
-(within $9\times10^{-11}$~\Eh), so the energy differences come from different structures, not from different energies for the same structure. The
+(within $9\times10^{-11}$~\Eh), so the energy differences come from the different structures. The
 structures and energies are GFN2-xTB results that we did not validate further.
 
 \begin{figure}[tbp]

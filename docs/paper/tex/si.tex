@@ -281,9 +281,9 @@ runs the optimizations in the main job rather than as array jobs, so its gain is
 run type & molecule & result \\
 \midrule
 protonation, deprotonation, tautomers & uracil, caffeine, guanine (gas phase) & same structures and energies in every run (fastest mode: largest $|\Delta E|$ $6.4\times10^{-6}$~\Eh) \\
-protonation & Ga-free peptide (132 atoms, $+3$, ALPB water) & lowest protomer the same within $2\times10^{-6}$~\Eh{} in all runs; the number of structures kept varies from run to run in conventional CREST itself (53, 69 and 60) as in FastCREST (74 and 58) \\
+protonation & Ga(III)--peptide (132 atoms, $+3$, ALPB water) & lowest protomer the same within $2\times10^{-6}$~\Eh{} in all runs; the number of structures kept varies from run to run in conventional CREST itself (53, 69 and 60) as in FastCREST (74 and 58) \\
 NCI-MTD & water trimer (gas phase) & same lowest energy ($-15.235025$~\Eh) in all nine runs \\
-NCI-MTD & Ga-free peptide (ALPB water, \quickflag) & lowest energies of six runs within 1.8~kcal/mol; conventional CREST 59.6 and 217.7~min, FastCREST 18.1 and 29.0~min (3.3 and 7.5 times faster in the two pairs of runs, different nodes), fastest mode 14.6 and 16.0~min \\
+NCI-MTD & Ga(III)--peptide (132 atoms, ALPB water, \quickflag) & lowest energies of six runs within 1.8~kcal/mol; conventional CREST 59.6 and 217.7~min, FastCREST 18.1 and 29.0~min (3.3 and 7.5 times faster in the two pairs of runs, different nodes), fastest mode 14.6 and 16.0~min \\
 NCI-MTD & test system (ALPB water) & one search each from the same structure: CREST 3.0.2 release 93.7~h (32 threads, EPYC 7502 node), FastCREST 34.2~h (A100 GPU, EPYC 7513 host; 2.7 times faster, with three MTD iterations against two); lowest energies 5.0~kcal/mol apart (FastCREST higher); 1 conformer with FastCREST, 7 with the release \\
 entropy & $n$-octane (gas phase) & conformational entropy 8.12~cal~mol$^{-1}$~K$^{-1}$ (FastCREST), 8.13 (fastest mode), 8.20, 8.20 and 8.32 (conventional CREST); for this 26-atom molecule FastCREST took 14.8~min and conventional CREST 7.3~min (2.0 times slower) \\
 entropy & taxol (113 atoms, ALPB water, \quickflag) & conformational entropy 9.65 (conventional CREST, 63.3~h), 9.89 (FastCREST, 46.5~h, 1.4 times faster) and 9.37~cal~mol$^{-1}$~K$^{-1}$ (fastest mode, 21.6~h, 2.9 times faster); different nodes \\
